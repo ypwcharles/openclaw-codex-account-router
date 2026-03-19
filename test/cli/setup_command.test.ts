@@ -100,6 +100,47 @@ describe("setup cli", () => {
     },
     15000
   );
+
+  it(
+    "writes managed PATH block to .bashrc for bash shells",
+    async () => {
+      const fixture = await createSetupFixture("setup-cli-bash-");
+      const { homeDir, authStorePath, realBinDir } = fixture;
+
+      await execa(
+        "node",
+        [
+          "--import",
+          "tsx",
+          "src/cli/main.ts",
+          "setup",
+          "--home-dir",
+          homeDir,
+          "--platform",
+          "linux",
+          "--auth-store",
+          authStorePath
+        ],
+        {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            HOME: homeDir,
+            SHELL: "/bin/bash",
+            PATH: `${realBinDir}${path.delimiter}${process.env.PATH ?? ""}`
+          }
+        }
+      );
+
+      const bashrcPath = path.join(homeDir, ".bashrc");
+      const bashrcText = await readFile(bashrcPath, "utf8");
+      expect(bashrcText).toContain("# >>> openclaw-router managed path >>>");
+      expect(bashrcText).toContain(
+        `export PATH=\"${path.join(homeDir, ".openclaw-router", "bin")}:$PATH\"`
+      );
+    },
+    15000
+  );
 });
 
 async function createSetupFixture(prefix: string): Promise<{

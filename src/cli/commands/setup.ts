@@ -146,7 +146,7 @@ function resolveShellProfile(
   }
   if (shellName === "bash") {
     return {
-      path: path.join(homeDir, ".bash_profile"),
+      path: path.join(homeDir, ".bashrc"),
       syntax: "posix"
     };
   }

@@ -128,7 +128,7 @@ By default, setup snapshot is written to:
 
 ## Uninstall / rollback
 
-1. Remove the `openclaw-router managed path` block from your shell profile (`~/.zprofile`, `~/.bash_profile`, or `~/.profile`).
+1. Remove the `openclaw-router managed path` block from your shell profile (`~/.zprofile`, `~/.bashrc`, or `~/.profile`).
 2. Delete managed install root:
 
 ```bash
