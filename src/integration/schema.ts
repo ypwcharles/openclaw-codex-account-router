@@ -9,5 +9,6 @@ export const IntegrationStateSchema = z.object({
   servicePath: z.string().min(1),
   lastSetupAt: z.string().datetime(),
   routerStatePath: z.string().min(1).optional(),
-  authStorePath: z.string().min(1).optional()
+  authStorePath: z.string().min(1).optional(),
+  authStoreBackupPath: z.string().min(1).optional()
 });

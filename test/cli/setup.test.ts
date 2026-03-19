@@ -21,29 +21,26 @@ describe("setup flow", () => {
 
     const authStorePath = path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
     await mkdir(path.dirname(authStorePath), { recursive: true });
-    await writeFile(
-      authStorePath,
-      JSON.stringify(
-        {
-          version: 1,
-          profiles: {
-            "openai-codex:a@example.com": {
-              provider: "openai-codex",
-              access: "a"
-            },
-            "openai-codex:b@example.com": {
-              provider: "openai-codex",
-              access: "b"
-            }
+    const originalAuthStoreRaw = JSON.stringify(
+      {
+        version: 1,
+        profiles: {
+          "openai-codex:a@example.com": {
+            provider: "openai-codex",
+            access: "a"
           },
-          order: {},
-          usageStats: {}
+          "openai-codex:b@example.com": {
+            provider: "openai-codex",
+            access: "b"
+          }
         },
-        null,
-        2
-      ),
-      "utf8"
+        order: {},
+        usageStats: {}
+      },
+      null,
+      2
     );
+    await writeFile(authStorePath, originalAuthStoreRaw, "utf8");
 
     const result = await runSetup(
       {
@@ -69,8 +66,14 @@ describe("setup flow", () => {
 
     const state = JSON.parse(await readFile(result.integrationStatePath, "utf8")) as {
       realOpenClawPath: string;
+      authStoreBackupPath?: string;
     };
     expect(state.realOpenClawPath).toBe("/usr/bin/openclaw");
+    expect(state.authStoreBackupPath).toBeDefined();
+    if (state.authStoreBackupPath) {
+      const backupRaw = await readFile(state.authStoreBackupPath, "utf8");
+      expect(JSON.parse(backupRaw)).toEqual(JSON.parse(originalAuthStoreRaw));
+    }
   });
 
   it("creates a managed launcher that works even when setup runs outside repo root", async () => {

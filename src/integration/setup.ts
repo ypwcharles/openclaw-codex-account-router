@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +24,7 @@ export type SetupResult = {
   servicePath: string;
   routerStatePath: string;
   authStorePath: string;
+  authStoreBackupPath: string;
 };
 
 export async function runSetup(
@@ -56,6 +57,7 @@ export async function runSetup(
 
   const discoveredProfiles = await discover(authStorePath);
   const realOpenClawPath = await resolveBinary();
+  const authStoreBackupPath = await ensureAuthStoreBackup(authStorePath, paths.installRoot);
 
   const routerEntryPath =
     params.routerEntryPath ??
@@ -96,7 +98,8 @@ export async function runSetup(
     servicePath: paths.servicePath,
     lastSetupAt: now().toISOString(),
     routerStatePath,
-    authStorePath
+    authStorePath,
+    authStoreBackupPath
   });
 
   return {
@@ -106,7 +109,8 @@ export async function runSetup(
     shimPath: paths.shimPath,
     servicePath: paths.servicePath,
     routerStatePath,
-    authStorePath
+    authStorePath,
+    authStoreBackupPath
   };
 }
 
@@ -208,6 +212,17 @@ function resolveDefaultRouterEntryPath(): string {
 function isTypeScriptEntry(entryPath: string): boolean {
   const lower = entryPath.toLowerCase();
   return lower.endsWith(".ts") || lower.endsWith(".mts") || lower.endsWith(".cts");
+}
+
+async function ensureAuthStoreBackup(authStorePath: string, installRoot: string): Promise<string> {
+  const backupDir = path.join(installRoot, "backups");
+  const backupPath = path.join(backupDir, "auth-profiles.pre-router.json");
+  if (!existsSync(backupPath)) {
+    const raw = await readFile(authStorePath, "utf8");
+    await mkdir(backupDir, { recursive: true });
+    await writeFile(backupPath, raw, "utf8");
+  }
+  return backupPath;
 }
 
 function shellEscape(value: string): string {

@@ -6,7 +6,7 @@ import { loadRouterState } from "../../account_store/store.js";
 import { loadIntegrationState } from "../../integration/store.js";
 import {
   resolveAuthStorePath,
-  resolveIntegrationStatePath,
+  resolveOptionalIntegrationStatePath,
   resolveRouterStatePath
 } from "../../shared/paths.js";
 
@@ -49,7 +49,9 @@ export function registerDoctorCommand(program: Command): void {
       const result = await runDoctor({
         routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
         authStorePath: resolveAuthStorePath(opts.authStore as string | undefined),
-        integrationStatePath: resolveIntegrationStatePath(opts.integrationState as string | undefined)
+        integrationStatePath: resolveOptionalIntegrationStatePath(
+          opts.integrationState as string | undefined
+        )
       });
       if (opts.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -66,7 +68,7 @@ export function registerDoctorCommand(program: Command): void {
 
 async function checkOpenClawBinary(): Promise<DoctorCheck> {
   try {
-    const result = await execa("openclaw", ["--help"], { reject: false });
+    const result = await execa("openclaw", ["--help"], { reject: false, timeout: 3000 });
     if (result.exitCode === 0) {
       return { id: "openclaw_binary", ok: true, detail: "openclaw is available" };
     }

@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { loadRouterState } from "../../account_store/store.js";
 import { loadIntegrationState } from "../../integration/store.js";
-import { resolveIntegrationStatePath, resolveRouterStatePath } from "../../shared/paths.js";
+import { resolveOptionalIntegrationStatePath, resolveRouterStatePath } from "../../shared/paths.js";
 import { selectEligibleAccounts } from "../../router/select_account.js";
 
 export type RouterStatusPayload = {
@@ -99,7 +99,7 @@ export function registerStatusCommand(program: Command): void {
     .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
-      const integrationStatePath = resolveIntegrationStatePath(
+      const integrationStatePath = resolveOptionalIntegrationStatePath(
         opts.integrationState as string | undefined
       );
 

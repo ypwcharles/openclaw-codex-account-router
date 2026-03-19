@@ -29,5 +29,6 @@ export function registerSetupCommand(program: Command): void {
       console.log(`Discovered profiles: ${result.discoveredProfiles.length}`);
       console.log(`Shim: ${result.shimPath}`);
       console.log(`Service: ${result.servicePath}`);
+      console.log(`Auth backup: ${result.authStoreBackupPath}`);
     });
 }

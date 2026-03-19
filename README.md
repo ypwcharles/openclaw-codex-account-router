@@ -7,8 +7,10 @@
 This project now supports an install/repair model:
 
 - `openclaw-router setup` installs managed artifacts under `~/.openclaw-router`
+- `setup` also snapshots OpenClaw auth store before router mutation
 - a managed `openclaw` shim forwards plain `openclaw ...` calls into router logic
 - `openclaw-router repair` rebuilds missing/corrupted shim + service files from persisted integration state
+- `openclaw-router restore` restores OpenClaw auth store from the setup snapshot
 
 Routing semantics remain unchanged:
 
@@ -46,9 +48,12 @@ node --import tsx src/cli/main.ts setup --json
 Check health:
 
 ```bash
-node --import tsx src/cli/main.ts doctor --integration-state ~/.openclaw-router/integration.json --json
-node --import tsx src/cli/main.ts status --integration-state ~/.openclaw-router/integration.json --json
+node --import tsx src/cli/main.ts doctor --json
+node --import tsx src/cli/main.ts status --json
 ```
+
+`status` / `doctor` / `run` auto-discover `~/.openclaw-router/integration.json` when `HOME` is available.
+In CI or minimal envs without `HOME`, pass explicit `--integration-state` (or explicit `--router-state` and `--auth-store` for `run`/`doctor`).
 
 ## Daily usage
 
@@ -77,6 +82,7 @@ openclaw-router status [--router-state <path>] [--integration-state <path>] [--j
 openclaw-router doctor [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json]
 openclaw-router run [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json] [commandArgs...]
 openclaw-router repair [--integration-state <path>] [--json]
+openclaw-router restore [--integration-state <path>] [--auth-store <path>] [--json]
 openclaw-router account list
 openclaw-router account add --profile-id <id> [--alias <alias>] [--priority <n>] [--force-default]
 openclaw-router account enable <alias>
@@ -101,6 +107,18 @@ Repair regenerates:
 
 - managed `openclaw` shim
 - platform service definition file
+
+## Restore
+
+If you need to revert OpenClaw auth store to setup-time baseline:
+
+```bash
+openclaw-router restore --integration-state ~/.openclaw-router/integration.json
+```
+
+By default, setup snapshot is written to:
+
+- `~/.openclaw-router/backups/auth-profiles.pre-router.json`
 
 ## Uninstall / rollback
 

@@ -10,6 +10,7 @@ export type IntegrationState = {
   lastSetupAt: string;
   routerStatePath?: string;
   authStorePath?: string;
+  authStoreBackupPath?: string;
 };
 
 export type IntegrationPaths = {

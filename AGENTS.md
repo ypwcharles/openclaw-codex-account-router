@@ -17,6 +17,7 @@ Required behavior:
 
 ```text
 setup -> discover codex profiles -> install shim/service -> persist integration state
+      -> snapshot auth-profiles.json for restore
 shim invocation -> openclaw-router run -> select Codex account -> sync OpenClaw order
                 -> run openclaw -> classify failure -> cooldown/disable/retry
                 -> if pool exhausted: allow one fallback run
@@ -61,6 +62,7 @@ Do not break these:
 - `run` must do one final fallback execution after pool exhaustion.
 - `status.cooldowns` should show only active cooldown entries.
 - Shimmed `openclaw ...` must preserve original CLI args and route through `run`.
+- `setup` must preserve a restore snapshot of OpenClaw auth store.
 
 ## Command surface
 
@@ -71,6 +73,7 @@ Primary user-facing CLI:
 - `doctor [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json]`
 - `run [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json] [commandArgs...]`
 - `repair [--integration-state <path>] [--json]`
+- `restore [--integration-state <path>] [--auth-store <path>] [--json]`
 - `account list`
 - `account add --profile-id <id> [--alias <alias>] [--priority <n>] [--force-default]`
 - `account enable <alias>`

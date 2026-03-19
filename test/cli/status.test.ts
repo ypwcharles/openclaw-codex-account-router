@@ -177,4 +177,37 @@ describe("status cli", () => {
     expect(payload.integration.installed).toBe(true);
     expect(payload.integration.integrationStatePath).toBe(defaultIntegrationStatePath);
   });
+
+  it("does not fail when HOME is missing and integration-state is omitted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "status-no-home-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const { stdout } = await execa(
+      "node",
+      ["--import", "tsx", "src/cli/main.ts", "status", "--router-state", routerStatePath, "--json"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: ""
+        }
+      }
+    );
+
+    const payload = JSON.parse(stdout) as { integration: { installed: boolean } };
+    expect(payload.integration.installed).toBe(false);
+  });
 });

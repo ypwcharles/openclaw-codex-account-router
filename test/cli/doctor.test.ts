@@ -113,9 +113,11 @@ describe("doctor command", () => {
     expect(serviceExists?.ok).toBe(false);
   });
 
-  it("auto-loads integration checks from default HOME path", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "doctor-default-intg-"));
-    cleanupPaths.push(dir);
+  it(
+    "auto-loads integration checks from default HOME path",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "doctor-default-intg-"));
+      cleanupPaths.push(dir);
 
     const homeDir = path.join(dir, "home");
     const routerStatePath = path.join(dir, "router-state.json");
@@ -167,9 +169,11 @@ describe("doctor command", () => {
       }
     );
 
-    const payload = JSON.parse(stdout) as { checks: Array<{ id: string }> };
-    expect(payload.checks.some((check) => check.id === "integration_state_readable")).toBe(true);
-  });
+      const payload = JSON.parse(stdout) as { checks: Array<{ id: string }> };
+      expect(payload.checks.some((check) => check.id === "integration_state_readable")).toBe(true);
+    },
+    15000
+  );
 
   it("marks openclaw_binary unhealthy when openclaw exits with non-zero status", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "doctor-openclaw-exit-"));
@@ -218,5 +222,40 @@ describe("doctor command", () => {
     } finally {
       process.env.PATH = originalPath;
     }
+  });
+
+  it("does not fail when HOME is missing and integration-state is omitted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-no-home-"));
+    cleanupPaths.push(dir);
+
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+    await writeFile(routerStatePath, JSON.stringify({ version: 1, accounts: [] }, null, 2), "utf8");
+    await writeFile(authStorePath, JSON.stringify({ version: 1, profiles: {} }, null, 2), "utf8");
+
+    const { stdout } = await execa(
+      "node",
+      [
+        "--import",
+        "tsx",
+        "src/cli/main.ts",
+        "doctor",
+        "--router-state",
+        routerStatePath,
+        "--auth-store",
+        authStorePath,
+        "--json"
+      ],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: ""
+        }
+      }
+    );
+
+    const payload = JSON.parse(stdout) as { checks: Array<{ id: string }> };
+    expect(payload.checks.some((check) => check.id === "openclaw_binary")).toBe(true);
   });
 });

@@ -5,7 +5,7 @@ import { execOpenClawCommand } from "../../router/openclaw_exec.js";
 import type { CodexPoolRunResult, OpenClawExecResult } from "../../router/result.js";
 import {
   resolveAuthStorePath,
-  resolveIntegrationStatePath,
+  resolveOptionalIntegrationStatePath,
   resolveRouterStatePath
 } from "../../shared/paths.js";
 
@@ -57,10 +57,12 @@ export function registerRunCommand(program: Command): void {
     .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (commandArgs, opts) => {
-      const integrationStatePath = resolveIntegrationStatePath(
+      const integrationStatePath = resolveOptionalIntegrationStatePath(
         opts.integrationState as string | undefined
       );
-      const integrationState = await loadIntegrationState(integrationStatePath);
+      const integrationState = integrationStatePath
+        ? await loadIntegrationState(integrationStatePath)
+        : undefined;
 
       const list = (commandArgs as string[]).map(String);
       const command = list[0] ?? "openclaw";

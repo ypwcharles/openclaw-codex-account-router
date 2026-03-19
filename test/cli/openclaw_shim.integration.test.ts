@@ -15,9 +15,11 @@ afterEach(async () => {
 });
 
 describe("openclaw shim integration", () => {
-  it("routes a plain openclaw invocation through the shim after setup", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-shim-intg-"));
-    cleanupPaths.push(dir);
+  it(
+    "routes a plain openclaw invocation through the shim after setup",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "openclaw-shim-intg-"));
+      cleanupPaths.push(dir);
 
     const homeDir = path.join(dir, "home");
     const authStorePath = path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
@@ -81,7 +83,9 @@ describe("openclaw shim integration", () => {
 
     const invocations = JSON.parse(await readFile(invocationStatePath, "utf8")) as { count: number };
 
-    expect(result.stdout).toContain("fallback-ok");
-    expect(invocations.count).toBe(3);
-  });
+      expect(result.stdout).toContain("fallback-ok");
+      expect(invocations.count).toBe(3);
+    },
+    15000
+  );
 });

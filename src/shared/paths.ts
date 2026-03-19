@@ -28,3 +28,18 @@ export function resolveIntegrationStatePath(explicit?: string): string {
   const platform = detectIntegrationPlatform();
   return resolveIntegrationPaths(homeDir, platform).integrationStatePath;
 }
+
+export function resolveOptionalIntegrationStatePath(explicit?: string): string | undefined {
+  const raw = explicit?.trim();
+  if (raw) {
+    return path.resolve(raw);
+  }
+
+  try {
+    const homeDir = resolveHomeDir();
+    const platform = detectIntegrationPlatform();
+    return resolveIntegrationPaths(homeDir, platform).integrationStatePath;
+  } catch {
+    return undefined;
+  }
+}
