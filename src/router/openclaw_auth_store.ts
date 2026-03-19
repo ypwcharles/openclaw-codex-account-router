@@ -57,6 +57,24 @@ export async function mirrorFailureToOpenClaw(
   });
 }
 
+export async function clearProfileFailureState(
+  authStorePath: string,
+  profileId: string
+): Promise<void> {
+  await updateOpenClawStore(authStorePath, (store) => {
+    if (!store.usageStats?.[profileId]) {
+      return;
+    }
+    const existing = store.usageStats[profileId] ?? {};
+    store.usageStats[profileId] = {
+      ...existing,
+      cooldownUntil: undefined,
+      disabledUntil: undefined,
+      disabledReason: undefined
+    };
+  });
+}
+
 async function updateOpenClawStore(
   authStorePath: string,
   updater: (store: OpenClawStore) => void

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { loadRouterState, saveRouterState } from "./store.js";
 import type { RouterAccount, RouterState } from "./types.js";
-import { syncCodexOrder } from "../router/openclaw_auth_store.js";
+import { clearProfileFailureState, syncCodexOrder } from "../router/openclaw_auth_store.js";
 
 type OpenClawAuthProfile = {
   provider?: string;
@@ -102,16 +102,26 @@ export async function setAccountEnabled(params: {
   if (index < 0) {
     throw new Error(`account "${params.alias}" not found`);
   }
-  state.accounts[index] = {
-    ...state.accounts[index],
+  const current = state.accounts[index];
+  const next: RouterAccount = {
+    ...current,
     enabled: params.enabled
   };
+  if (params.enabled && current.status === "disabled") {
+    next.status = "healthy";
+    next.cooldownUntil = undefined;
+    next.lastErrorCode = undefined;
+  }
+  state.accounts[index] = next;
   state.accounts.sort((a, b) => a.priority - b.priority);
   await saveRouterState(params.routerStatePath, state);
   await syncCodexOrder(
     params.authStorePath,
     state.accounts.filter((item) => item.enabled).map((item) => item.profileId)
   );
+  if (params.enabled) {
+    await clearProfileFailureState(params.authStorePath, next.profileId);
+  }
   return state;
 }
 
@@ -166,6 +176,7 @@ export async function setAccountOrderByAlias(params: {
 
 export async function clearAccountCooldown(params: {
   routerStatePath: string;
+  authStorePath: string;
   alias: string;
 }): Promise<RouterState> {
   const state = await loadRouterState(params.routerStatePath);
@@ -176,11 +187,12 @@ export async function clearAccountCooldown(params: {
   const current = state.accounts[index];
   state.accounts[index] = {
     ...current,
-    status: "healthy",
+    status: current.status === "cooldown" ? "healthy" : current.status,
     cooldownUntil: undefined,
-    lastErrorCode: undefined
+    lastErrorCode: current.status === "cooldown" ? undefined : current.lastErrorCode
   };
   await saveRouterState(params.routerStatePath, state);
+  await clearProfileFailureState(params.authStorePath, current.profileId);
   return state;
 }
 

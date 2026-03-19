@@ -87,4 +87,79 @@ describe("run cli command", () => {
       "openai-codex:b@example.com"
     ]);
   });
+
+  it("runs one extra openclaw attempt after codex pool exhaustion to allow provider fallback", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "run-cli-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:a@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "healthy",
+              enabled: true
+            },
+            {
+              alias: "acct-b",
+              profileId: "openai-codex:b@example.com",
+              provider: "openai-codex",
+              priority: 20,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": { type: "oauth", provider: "openai-codex", access: "a" },
+            "openai-codex:b@example.com": { type: "oauth", provider: "openai-codex", access: "b" }
+          },
+          order: {},
+          usageStats: {}
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const execOpenClaw = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("You have hit your ChatGPT usage limit (team plan)"))
+      .mockRejectedValueOnce(new Error("You have hit your ChatGPT usage limit (team plan)"))
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "fallback-ok", stderr: "" });
+
+    const result = await runRouterCommand(
+      {
+        routerStatePath,
+        authStorePath,
+        command: "openclaw",
+        args: ["agent"]
+      },
+      { execOpenClaw, now: () => new Date("2026-03-19T12:00:00.000Z") }
+    );
+
+    expect(result.poolExhausted).toBe(true);
+    expect(result.result?.stdout).toBe("fallback-ok");
+    expect(execOpenClaw).toHaveBeenCalledTimes(3);
+  });
 });

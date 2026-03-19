@@ -2,7 +2,11 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { mirrorFailureToOpenClaw, syncCodexOrder } from "../../src/router/openclaw_auth_store.js";
+import {
+  clearProfileFailureState,
+  mirrorFailureToOpenClaw,
+  syncCodexOrder
+} from "../../src/router/openclaw_auth_store.js";
 
 const cleanupPaths: string[] = [];
 
@@ -66,5 +70,53 @@ describe("openclaw auth bridge", () => {
     expect(next.order["openai-codex"]?.[0]).toBe("openai-codex:b@example.com");
     expect(next.usageStats["openai-codex:a@example.com"]?.disabledReason).toBe("auth_permanent");
     expect(typeof next.usageStats["openai-codex:a@example.com"]?.disabledUntil).toBe("number");
+  });
+
+  it("clears mirrored cooldown and disable markers for a profile", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-auth-"));
+    cleanupPaths.push(dir);
+    const authPath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      authPath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "a"
+            }
+          },
+          usageStats: {
+            "openai-codex:a@example.com": {
+              cooldownUntil: 9_999_999_999_999,
+              disabledUntil: 9_999_999_999_999,
+              disabledReason: "billing"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await clearProfileFailureState(authPath, "openai-codex:a@example.com");
+
+    const next = JSON.parse(await readFile(authPath, "utf8")) as {
+      usageStats: Record<
+        string,
+        {
+          cooldownUntil?: number;
+          disabledUntil?: number;
+          disabledReason?: string;
+        }
+      >;
+    };
+    expect(next.usageStats["openai-codex:a@example.com"]?.cooldownUntil).toBeUndefined();
+    expect(next.usageStats["openai-codex:a@example.com"]?.disabledUntil).toBeUndefined();
+    expect(next.usageStats["openai-codex:a@example.com"]?.disabledReason).toBeUndefined();
   });
 });

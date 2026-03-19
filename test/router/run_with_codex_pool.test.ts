@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -86,5 +86,88 @@ describe("runWithCodexPool", () => {
       "openai-codex:a@example.com",
       "openai-codex:b@example.com"
     ]);
+  });
+
+  it("mirrors timeout retry escalation as timeout instead of rate_limit", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "codex-pool-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    const state: RouterState = {
+      version: 1,
+      accounts: [
+        {
+          alias: "acct-a",
+          profileId: "openai-codex:a@example.com",
+          provider: "openai-codex",
+          priority: 10,
+          status: "healthy",
+          enabled: true
+        },
+        {
+          alias: "acct-b",
+          profileId: "openai-codex:b@example.com",
+          provider: "openai-codex",
+          priority: 20,
+          status: "healthy",
+          enabled: true
+        }
+      ]
+    };
+    await writeFile(routerStatePath, JSON.stringify(state, null, 2), "utf8");
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "a"
+            },
+            "openai-codex:b@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "b"
+            }
+          },
+          order: {},
+          usageStats: {}
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const execOpenClaw = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("request timed out"))
+      .mockRejectedValueOnce(new Error("request timed out"))
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "ok", stderr: "" });
+
+    const result = await runWithCodexPool({
+      routerStatePath,
+      authStorePath,
+      command: "openclaw",
+      args: ["agent"],
+      execOpenClaw,
+      now: () => new Date("2026-03-19T12:00:00.000Z")
+    });
+
+    const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      usageStats?: Record<string, { failureCounts?: Record<string, number> }>;
+    };
+    const usage = authStore.usageStats?.["openai-codex:a@example.com"];
+    expect(result.poolExhausted).toBe(false);
+    expect(result.usedProfileIds).toEqual([
+      "openai-codex:a@example.com",
+      "openai-codex:a@example.com",
+      "openai-codex:b@example.com"
+    ]);
+    expect(usage?.failureCounts?.["timeout"]).toBe(1);
+    expect(usage?.failureCounts?.["rate_limit"]).toBeUndefined();
   });
 });

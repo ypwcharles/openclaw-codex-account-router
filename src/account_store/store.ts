@@ -4,11 +4,6 @@ import lockfile from "proper-lockfile";
 import { RouterStateSchema } from "./schema.js";
 import type { RouterState } from "./types.js";
 
-const EMPTY_STATE: RouterState = {
-  version: 1,
-  accounts: []
-};
-
 export async function loadRouterState(statePath: string): Promise<RouterState> {
   try {
     const raw = await readFile(statePath, "utf8");
@@ -16,7 +11,10 @@ export async function loadRouterState(statePath: string): Promise<RouterState> {
     return RouterStateSchema.parse(parsed);
   } catch (error) {
     if (isFileNotFound(error)) {
-      return EMPTY_STATE;
+      return {
+        version: 1,
+        accounts: []
+      };
     }
     throw error;
   }

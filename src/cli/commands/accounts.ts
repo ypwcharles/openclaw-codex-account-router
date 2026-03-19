@@ -103,10 +103,12 @@ export function registerAccountsCommands(program: Command): void {
     .command("clear")
     .argument("<alias>", "Account alias")
     .option("--router-state <path>", "Router state path")
+    .option("--auth-store <path>", "OpenClaw auth store path")
     .action(async (alias, opts) => {
       await clearAccountCooldown({
         alias: String(alias),
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined)
+        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
+        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
       });
       console.log(`cleared cooldown for ${alias}`);
     });

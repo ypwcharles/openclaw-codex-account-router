@@ -2,6 +2,7 @@ import { classifyCodexFailure } from "../classifier/codex_error_classifier.js";
 import { loadRouterState, saveRouterState } from "../account_store/store.js";
 import type { RouterAccount, RouterState } from "../account_store/types.js";
 import { mirrorFailureToOpenClaw, syncCodexOrder } from "./openclaw_auth_store.js";
+import type { MirroredFailureReason } from "./openclaw_usage_mirror.js";
 import { execOpenClawCommand } from "./openclaw_exec.js";
 import type { CodexPoolRunResult, OpenClawExecResult } from "./result.js";
 import { selectEligibleAccounts } from "./select_account.js";
@@ -56,7 +57,7 @@ export async function runWithCodexPool(params: {
           applyCooldown(account, now, classified.normalizedCode);
           await mirrorFailureToOpenClaw(params.authStorePath, {
             profileId: current.profileId,
-            reason: "rate_limit",
+            reason: toMirroredFailureReason(classified.reason),
             now
           });
           await saveRouterState(params.routerStatePath, state);
@@ -65,7 +66,7 @@ export async function runWithCodexPool(params: {
         applyCooldown(account, now, classified.normalizedCode);
         await mirrorFailureToOpenClaw(params.authStorePath, {
           profileId: current.profileId,
-          reason: "rate_limit",
+          reason: toMirroredFailureReason(classified.reason),
           now
         });
         await saveRouterState(params.routerStatePath, state);
@@ -93,6 +94,24 @@ export async function runWithCodexPool(params: {
     usedProfileIds,
     lastError
   };
+}
+
+function toMirroredFailureReason(
+  reason: "rate_limit" | "auth_permanent" | "billing" | "timeout" | "unknown"
+): MirroredFailureReason {
+  if (reason === "auth_permanent") {
+    return "auth_permanent";
+  }
+  if (reason === "billing") {
+    return "billing";
+  }
+  if (reason === "timeout") {
+    return "timeout";
+  }
+  if (reason === "unknown") {
+    return "unknown";
+  }
+  return "rate_limit";
 }
 
 function findAccountByAlias(state: RouterState, alias: string): RouterAccount {

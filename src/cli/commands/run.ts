@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { runWithCodexPool } from "../../router/run_with_codex_pool.js";
+import { execOpenClawCommand } from "../../router/openclaw_exec.js";
 import type { CodexPoolRunResult, OpenClawExecResult } from "../../router/result.js";
 import { resolveAuthStorePath, resolveRouterStatePath } from "../../shared/paths.js";
 
@@ -15,7 +16,7 @@ export async function runRouterCommand(
     now?: () => Date;
   }
 ): Promise<CodexPoolRunResult> {
-  return await runWithCodexPool({
+  const result = await runWithCodexPool({
     routerStatePath: params.routerStatePath,
     authStorePath: params.authStorePath,
     command: params.command,
@@ -23,6 +24,23 @@ export async function runRouterCommand(
     execOpenClaw: deps?.execOpenClaw,
     now: deps?.now
   });
+  if (!result.poolExhausted) {
+    return result;
+  }
+
+  const exec = deps?.execOpenClaw ?? execOpenClawCommand;
+  try {
+    const fallbackResult = await exec(params.command, params.args);
+    return {
+      ...result,
+      result: fallbackResult
+    };
+  } catch (error) {
+    return {
+      ...result,
+      lastError: error instanceof Error ? error.message : String(error)
+    };
+  }
 }
 
 export function registerRunCommand(program: Command): void {
@@ -47,7 +65,15 @@ export function registerRunCommand(program: Command): void {
         return;
       }
       if (result.poolExhausted) {
-        console.log("Codex account pool exhausted; provider fallback is allowed.");
+        if (result.result) {
+          console.log("Codex account pool exhausted; completed via provider fallback.");
+        } else {
+          console.log("Codex account pool exhausted; provider fallback run failed.");
+          if (result.lastError) {
+            console.error(result.lastError);
+          }
+          process.exitCode = 1;
+        }
       } else {
         console.log(`Run succeeded via profiles: ${result.usedProfileIds.join(" -> ")}`);
       }

@@ -74,11 +74,27 @@ async function checkAliasMappings(
   authStorePath: string
 ): Promise<DoctorCheck[]> {
   const state = await loadRouterState(routerStatePath);
-  const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
-    profiles?: Record<string, unknown>;
-  };
-  const profiles = authStore.profiles ?? {};
   const checks: DoctorCheck[] = [];
+  let profiles: Record<string, unknown> = {};
+
+  try {
+    const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      profiles?: Record<string, unknown>;
+    };
+    profiles = authStore.profiles ?? {};
+  } catch {
+    checks.push({
+      id: "alias_profile_mapping",
+      ok: false,
+      detail: `cannot read/parse auth store: ${authStorePath}`
+    });
+    checks.push({
+      id: "default_profile_duplicate",
+      ok: false,
+      detail: "skipped because auth store is unavailable"
+    });
+    return checks;
+  }
 
   const missing = state.accounts
     .filter((account) => !(account.profileId in profiles))
