@@ -1,8 +1,13 @@
 {
   "name": "openclaw-codex-account-router",
   "version": "0.1.0",
+  "description": "Local OpenClaw router with Codex multi-account failover and managed shim install",
   "private": true,
   "type": "module",
+  "bin": {
+    "openclaw-router": "dist/src/cli/main.js",
+    "codex-account-router": "dist/src/cli/main.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",

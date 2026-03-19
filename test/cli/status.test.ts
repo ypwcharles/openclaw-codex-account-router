@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,10 +14,12 @@ afterEach(async () => {
 });
 
 describe("status cli", () => {
-  it("shows current pool and next candidate", async () => {
+  it("shows integration health along with routing health", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "status-cli-"));
     cleanupPaths.push(dir);
     const routerStatePath = path.join(dir, "router-state.json");
+    const integrationStatePath = path.join(dir, "integration.json");
+
     await writeFile(
       routerStatePath,
       JSON.stringify(
@@ -59,6 +61,24 @@ describe("status cli", () => {
       "utf8"
     );
 
+    await writeFile(
+      integrationStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          platform: "linux",
+          installRoot: dir,
+          shimPath: path.join(dir, "bin", "openclaw"),
+          realOpenClawPath: "/usr/bin/openclaw",
+          servicePath: path.join(dir, "services", "openclaw-router-repair.service"),
+          lastSetupAt: "2026-03-19T10:00:00.000Z"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
     const { stdout } = await execa(
       "node",
       [
@@ -68,6 +88,8 @@ describe("status cli", () => {
         "status",
         "--router-state",
         routerStatePath,
+        "--integration-state",
+        integrationStatePath,
         "--json"
       ],
       { cwd: repoRoot }
@@ -78,12 +100,114 @@ describe("status cli", () => {
       nextCandidate?: string;
       lastProviderFallbackReason?: string;
       cooldowns: Array<{ alias: string; until?: string }>;
+      integration: {
+        installed: boolean;
+        shimPath?: string;
+        realOpenClawPath?: string;
+      };
     };
+
     expect(payload.currentOrder).toEqual(["acct-a", "acct-b", "acct-c"]);
     expect(payload.cooldowns).toEqual([
       { alias: "acct-c", until: "2099-01-01T00:00:00.000Z" }
     ]);
     expect(payload.nextCandidate).toBe("acct-a");
     expect(payload.lastProviderFallbackReason).toBe("Codex account pool exhausted");
+    expect(payload.integration.installed).toBe(true);
+    expect(payload.integration.shimPath).toContain("openclaw");
+    expect(payload.integration.realOpenClawPath).toBe("/usr/bin/openclaw");
+  });
+
+  it("auto-loads default integration state from HOME when option is omitted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "status-default-intg-"));
+    cleanupPaths.push(dir);
+    const homeDir = path.join(dir, "home");
+    const routerStatePath = path.join(dir, "router-state.json");
+    const defaultIntegrationStatePath = path.join(homeDir, ".openclaw-router", "integration.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await mkdir(path.dirname(defaultIntegrationStatePath), { recursive: true });
+    await writeFile(
+      defaultIntegrationStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          platform: "linux",
+          installRoot: path.join(homeDir, ".openclaw-router"),
+          shimPath: path.join(homeDir, ".openclaw-router", "bin", "openclaw"),
+          realOpenClawPath: "/usr/bin/openclaw",
+          servicePath: path.join(homeDir, ".openclaw-router", "services", "openclaw-router-repair.service"),
+          lastSetupAt: "2026-03-19T10:00:00.000Z"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const { stdout } = await execa(
+      "node",
+      ["--import", "tsx", "src/cli/main.ts", "status", "--router-state", routerStatePath, "--json"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: homeDir
+        }
+      }
+    );
+
+    const payload = JSON.parse(stdout) as {
+      integration: {
+        installed: boolean;
+        integrationStatePath?: string;
+      };
+    };
+    expect(payload.integration.installed).toBe(true);
+    expect(payload.integration.integrationStatePath).toBe(defaultIntegrationStatePath);
+  });
+
+  it("does not fail when HOME is missing and integration-state is omitted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "status-no-home-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const { stdout } = await execa(
+      "node",
+      ["--import", "tsx", "src/cli/main.ts", "status", "--router-state", routerStatePath, "--json"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: ""
+        }
+      }
+    );
+
+    const payload = JSON.parse(stdout) as { integration: { installed: boolean } };
+    expect(payload.integration.installed).toBe(false);
   });
 });
