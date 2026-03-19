@@ -9,6 +9,7 @@ This project now supports an install/repair model:
 - `openclaw-router setup` installs managed artifacts under `~/.openclaw-router`
 - `setup` also snapshots OpenClaw auth store before router mutation
 - a managed `openclaw` shim forwards plain `openclaw ...` calls into router logic
+- `setup` auto-updates your shell profile to prepend the managed shim path
 - `openclaw-router repair` rebuilds missing/corrupted shim + service files from persisted integration state
 - `openclaw-router restore` restores OpenClaw auth store from the setup snapshot
 
@@ -45,6 +46,12 @@ Run setup:
 node --import tsx src/cli/main.ts setup --json
 ```
 
+Plain `setup` output also prints:
+
+- `Repair` command
+- `Undo` command (`restore`)
+- platform inspection command (`launchctl print` / `systemctl --user status`)
+
 Check health:
 
 ```bash
@@ -59,10 +66,9 @@ In CI or minimal envs without `HOME`, pass explicit `--integration-state` (or ex
 
 ### 1) Plain `openclaw` through shim
 
-After setup, add managed bin path ahead of your normal OpenClaw path:
+After setup, open a new shell session (or source your profile) so the managed PATH update takes effect:
 
 ```bash
-export PATH="$HOME/.openclaw-router/bin:$PATH"
 openclaw agent --message "hello"
 ```
 
@@ -122,7 +128,7 @@ By default, setup snapshot is written to:
 
 ## Uninstall / rollback
 
-1. Remove managed bin from your shell `PATH`.
+1. Remove the `openclaw-router managed path` block from your shell profile (`~/.zprofile`, `~/.bash_profile`, or `~/.profile`).
 2. Delete managed install root:
 
 ```bash

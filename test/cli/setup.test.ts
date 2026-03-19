@@ -130,4 +130,78 @@ describe("setup flow", () => {
     expect(stdout).toContain("Usage: openclaw-router");
     expect(stdout).toContain("setup");
   });
+
+  it("refreshes auth backup on every setup rerun", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "setup-rerun-backup-"));
+    cleanupPaths.push(homeDir);
+
+    const authStorePath = path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
+    await mkdir(path.dirname(authStorePath), { recursive: true });
+
+    const firstAuthStoreRaw = JSON.stringify(
+      {
+        version: 1,
+        profiles: {
+          "openai-codex:a1@example.com": { provider: "openai-codex", access: "a1" }
+        },
+        order: {},
+        usageStats: {}
+      },
+      null,
+      2
+    );
+    await writeFile(authStorePath, firstAuthStoreRaw, "utf8");
+
+    await runSetup(
+      {
+        homeDir,
+        platform: "linux",
+        authStorePath
+      },
+      {
+        discoverOpenClawProfiles: async () => ["openai-codex:a1@example.com"],
+        resolveOpenClawBinary: async () => "/usr/bin/openclaw"
+      }
+    );
+
+    const secondAuthStoreRaw = JSON.stringify(
+      {
+        version: 1,
+        profiles: {
+          "openai-codex:a2@example.com": { provider: "openai-codex", access: "a2" },
+          "openai-codex:b2@example.com": { provider: "openai-codex", access: "b2" }
+        },
+        order: {},
+        usageStats: {}
+      },
+      null,
+      2
+    );
+    await writeFile(authStorePath, secondAuthStoreRaw, "utf8");
+
+    const secondSetup = await runSetup(
+      {
+        homeDir,
+        platform: "linux",
+        authStorePath
+      },
+      {
+        discoverOpenClawProfiles: async () => [
+          "openai-codex:a2@example.com",
+          "openai-codex:b2@example.com"
+        ],
+        resolveOpenClawBinary: async () => "/usr/bin/openclaw"
+      }
+    );
+
+    const integrationStateRaw = await readFile(secondSetup.integrationStatePath, "utf8");
+    const integrationState = JSON.parse(integrationStateRaw) as { authStoreBackupPath?: string };
+    expect(integrationState.authStoreBackupPath).toBeDefined();
+    if (!integrationState.authStoreBackupPath) {
+      throw new Error("authStoreBackupPath is required");
+    }
+
+    const backupRaw = await readFile(integrationState.authStoreBackupPath, "utf8");
+    expect(JSON.parse(backupRaw)).toEqual(JSON.parse(secondAuthStoreRaw));
+  });
 });

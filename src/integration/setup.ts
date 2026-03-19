@@ -217,11 +217,9 @@ function isTypeScriptEntry(entryPath: string): boolean {
 async function ensureAuthStoreBackup(authStorePath: string, installRoot: string): Promise<string> {
   const backupDir = path.join(installRoot, "backups");
   const backupPath = path.join(backupDir, "auth-profiles.pre-router.json");
-  if (!existsSync(backupPath)) {
-    const raw = await readFile(authStorePath, "utf8");
-    await mkdir(backupDir, { recursive: true });
-    await writeFile(backupPath, raw, "utf8");
-  }
+  const raw = await readFile(authStorePath, "utf8");
+  await mkdir(backupDir, { recursive: true });
+  await writeFile(backupPath, raw, "utf8");
   return backupPath;
 }
 
