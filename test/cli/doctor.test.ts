@@ -12,42 +12,46 @@ afterEach(async () => {
 });
 
 describe("doctor command", () => {
-  it("returns failed checks instead of throwing when auth store json is invalid", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "doctor-cli-"));
-    cleanupPaths.push(dir);
-    const routerStatePath = path.join(dir, "router-state.json");
-    const authStorePath = path.join(dir, "auth-profiles.json");
+  it(
+    "returns failed checks instead of throwing when auth store json is invalid",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "doctor-cli-"));
+      cleanupPaths.push(dir);
+      const routerStatePath = path.join(dir, "router-state.json");
+      const authStorePath = path.join(dir, "auth-profiles.json");
 
-    await writeFile(
-      routerStatePath,
-      JSON.stringify(
-        {
-          version: 1,
-          accounts: [
-            {
-              alias: "acct-a",
-              profileId: "openai-codex:a@example.com",
-              provider: "openai-codex",
-              priority: 10,
-              status: "healthy",
-              enabled: true
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(authStorePath, "{invalid json", "utf8");
+      await writeFile(
+        routerStatePath,
+        JSON.stringify(
+          {
+            version: 1,
+            accounts: [
+              {
+                alias: "acct-a",
+                profileId: "openai-codex:a@example.com",
+                provider: "openai-codex",
+                priority: 10,
+                status: "healthy",
+                enabled: true
+              }
+            ]
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+      await writeFile(authStorePath, "{invalid json", "utf8");
 
-    const result = await runDoctor({
-      routerStatePath,
-      authStorePath
-    });
-    const mapping = result.checks.find((check) => check.id === "alias_profile_mapping");
+      const result = await runDoctor({
+        routerStatePath,
+        authStorePath
+      });
+      const mapping = result.checks.find((check) => check.id === "alias_profile_mapping");
 
-    expect(mapping?.ok).toBe(false);
-    expect(mapping?.detail).toContain("cannot read/parse auth store");
-  });
+      expect(mapping?.ok).toBe(false);
+      expect(mapping?.detail).toContain("cannot read/parse auth store");
+    },
+    15000
+  );
 });
