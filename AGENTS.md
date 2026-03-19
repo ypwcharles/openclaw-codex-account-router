@@ -1,31 +1,60 @@
 # AGENTS.md
 
-## Project intent
+If you are an agent operating inside this repository, read this first.
 
-This repository provides a local router CLI for OpenClaw:
+## Mission
 
-- Keep traffic in `openai-codex` account pool first.
-- Mirror account health to OpenClaw auth store.
-- Allow provider fallback only after Codex pool exhaustion.
+This project is a local OpenClaw router for `openai-codex` multi-account failover.
 
-## Superpowers setup
+Required behavior:
 
-This repo expects Superpowers to be installed via native skill discovery:
+- Keep traffic inside the Codex account pool first.
+- Mirror router decisions into OpenClaw auth state.
+- Allow cross-provider fallback only after the Codex pool is exhausted.
 
-1. Clone to `~/.codex/superpowers`
-2. Symlink `~/.agents/skills/superpowers` -> `~/.codex/superpowers/skills`
-3. Restart Codex if setup changed
+## Fast mental model
 
-Do not use legacy bootstrap flow.
+```text
+router state -> select Codex account -> sync OpenClaw order
+            -> run openclaw -> classify failure
+            -> cooldown / disable / retry
+            -> if pool exhausted: allow one fallback run
+```
 
-## Core commands
+## Files that matter most
 
-- Install: `pnpm install`
-- Test: `pnpm test`
-- Build: `pnpm build`
-- CLI help: `node --import tsx src/cli/main.ts --help`
+Read these before changing behavior:
 
-## Router command surface
+- Router store and schema
+  - `src/account_store/schema.ts`
+  - `src/account_store/store.ts`
+  - `src/account_store/bind.ts`
+- OpenClaw bridge
+  - `src/router/openclaw_auth_store.ts`
+  - `src/router/openclaw_usage_mirror.ts`
+  - `src/router/run_with_codex_pool.ts`
+  - `src/router/select_account.ts`
+- CLI contract
+  - `src/cli/main.ts`
+  - `src/cli/commands/accounts.ts`
+  - `src/cli/commands/status.ts`
+  - `src/cli/commands/doctor.ts`
+  - `src/cli/commands/run.ts`
+
+## Behavioral invariants
+
+Do not break these:
+
+- `openai-codex:default` binding requires explicit `--force-default`.
+- `accounts enable` must make an account routable again.
+- `cooldown clear` must only clear cooldown semantics, not disabled semantics.
+- Router cooldown timestamps should match OpenClaw mirrored cooldown timestamps.
+- `run` must do one final fallback execution after pool exhaustion.
+- `status.cooldowns` should show only active cooldown entries.
+
+## Command surface
+
+The public CLI is:
 
 - `status [--router-state <path>] [--json]`
 - `doctor [--router-state <path>] [--auth-store <path>] [--json]`
@@ -37,48 +66,55 @@ Do not use legacy bootstrap flow.
 - `accounts order set <aliases...>`
 - `cooldown clear <alias>`
 
-## Behavioral invariants
+Keep docs and tests aligned if this changes.
 
-- `openai-codex:default` binding requires explicit `--force-default`.
-- `accounts enable` must produce a routable account (`enabled=true`, not stuck disabled).
-- `cooldown clear` must only clear cooldown semantics and must not silently clear disabled markers.
-- Runtime cooldown timestamps in router state should stay aligned with OpenClaw mirrored cooldown.
-- On pool exhausted, `run` performs one fallback execution attempt.
+## Test requirements
 
-## Files to treat as source of truth
+Use TDD for behavior changes:
 
-- Router state schema/store:
-  - `src/account_store/schema.ts`
-  - `src/account_store/store.ts`
-  - `src/account_store/bind.ts`
-- OpenClaw mirror bridge:
-  - `src/router/openclaw_auth_store.ts`
-  - `src/router/openclaw_usage_mirror.ts`
-  - `src/router/run_with_codex_pool.ts`
-- CLI contract:
-  - `src/cli/main.ts`
-  - `src/cli/commands/*.ts`
+1. Write or adjust a failing test first.
+2. Run the targeted test and verify it fails for the expected reason.
+3. Implement the minimal fix.
+4. Re-run the targeted test.
+5. Run full `pnpm test`.
+6. Run `pnpm build`.
 
-## Test strategy requirements
+Extra rules:
 
-- Prefer TDD for behavior changes:
-  1. add/adjust failing test
-  2. implement minimal fix
-  3. run targeted tests
-  4. run full `pnpm test`
-- For CLI runtime behavior changes, include at least one integration-style test with real child process execution.
-- Keep acceptance behavior covered in `test/acceptance/requirements.test.ts`.
+- Runtime CLI changes should keep at least one real-process integration test.
+- Acceptance behavior belongs in `test/acceptance/requirements.test.ts`.
+- Avoid mock-only confidence for pool exhaustion and fallback logic.
 
-## Completion gate
+## Validation gate
 
-Before claiming work complete:
+Before claiming completion:
 
-1. `pnpm test`
-2. `pnpm build`
-3. If CLI behavior changed, validate one representative command manually.
+```bash
+pnpm test
+pnpm build
+```
+
+If command behavior changed, also run one representative CLI command manually.
 
 ## Scope discipline
 
-- Avoid introducing network services or HTTP admin APIs for MVP.
-- Keep OpenClaw compatibility stable; do not change unrelated provider behavior.
-- Prefer small, explicit changes over broad refactors.
+- Do not add a network admin API for this project.
+- Do not change unrelated OpenClaw provider behavior.
+- Prefer small, explicit edits over broad refactors.
+- Keep OpenClaw-facing constants and semantics easy to patch when upstream changes.
+
+## Environment assumptions
+
+- Router state default path: `config/accounts.json`
+- OpenClaw auth store default path: `~/.openclaw/agents/main/agent/auth-profiles.json`
+- `openclaw` is expected in `PATH`
+
+## Superpowers
+
+This repo expects Superpowers via native skill discovery:
+
+1. Clone to `~/.codex/superpowers`
+2. Symlink `~/.agents/skills/superpowers` -> `~/.codex/superpowers/skills`
+3. Restart Codex if setup changed
+
+Do not use the legacy bootstrap flow.
