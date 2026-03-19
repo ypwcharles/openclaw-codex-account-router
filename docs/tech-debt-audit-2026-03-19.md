@@ -40,3 +40,11 @@ Formula: `Priority = (Impact + Risk) x (6 - Effort)`.
   - `commander` and `@types/node` first.
   - `vitest` second with test harness compatibility checks.
   - `zod` major migration last (schema API compatibility pass).
+
+## Execution Update (2026-03-19)
+
+- ✅ #1 Infrastructure debt: CI workflow added at `.github/workflows/ci.yml` (push/PR runs install/test/build).
+- ✅ #2 Code debt: router cooldown now mirrors OpenClaw usage cooldown timestamp instead of fixed 1 hour.
+- 🟡 #3 Dependency debt: completed first sub-phase (`commander` and `@types/node` upgraded). `vitest` and `zod` major upgrades pending.
+- ✅ #4 Test debt: added real-process integration test `test/cli/run.integration.test.ts` with child-process harness.
+- ✅ #5 Documentation debt: README now includes operator runbook and triage guidance.

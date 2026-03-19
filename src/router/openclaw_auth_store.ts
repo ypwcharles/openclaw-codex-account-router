@@ -1,7 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import lockfile from "proper-lockfile";
-import { mirrorFailureStats, type MirroredFailureReason } from "./openclaw_usage_mirror.js";
+import {
+  mirrorFailureStats,
+  type MirroredFailureReason,
+  type OpenClawUsageStats
+} from "./openclaw_usage_mirror.js";
 
 type OpenClawStore = {
   version: number;
@@ -41,19 +45,21 @@ export async function mirrorFailureToOpenClaw(
     reason: MirroredFailureReason;
     now: Date;
   }
-): Promise<void> {
-  await updateOpenClawStore(authStorePath, (store) => {
+): Promise<OpenClawUsageStats> {
+  return await updateOpenClawStore(authStorePath, (store) => {
     store.usageStats = store.usageStats ?? {};
-    store.usageStats[params.profileId] = mirrorFailureStats({
+    const nextStats = mirrorFailureStats({
       existing: store.usageStats[params.profileId],
       reason: params.reason,
       nowMs: params.now.getTime()
     });
+    store.usageStats[params.profileId] = nextStats;
     if (params.reason === "auth_permanent" || params.reason === "billing") {
       if (store.lastGood?.[OPENAI_CODEX_PROVIDER] === params.profileId) {
         delete store.lastGood[OPENAI_CODEX_PROVIDER];
       }
     }
+    return nextStats;
   });
 }
 
@@ -91,10 +97,10 @@ export async function clearProfileCooldown(
   });
 }
 
-async function updateOpenClawStore(
+async function updateOpenClawStore<T>(
   authStorePath: string,
-  updater: (store: OpenClawStore) => void
-): Promise<void> {
+  updater: (store: OpenClawStore) => T
+): Promise<T> {
   const dir = path.dirname(authStorePath);
   const lockPath = path.join(dir, ".openclaw-auth-profiles.lock");
   const tempPath = `${authStorePath}.tmp`;
@@ -112,9 +118,10 @@ async function updateOpenClawStore(
 
   try {
     const store = await loadOpenClawStore(authStorePath);
-    updater(store);
+    const result = updater(store);
     await writeFile(tempPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
     await rename(tempPath, authStorePath);
+    return result;
   } finally {
     await release();
   }

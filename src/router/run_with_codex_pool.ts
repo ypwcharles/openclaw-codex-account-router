@@ -54,21 +54,21 @@ export async function runWithCodexPool(params: {
         if (retryCount < 1) {
           retryByProfile.set(current.profileId, retryCount + 1);
         } else {
-          applyCooldown(account, now, classified.normalizedCode);
-          await mirrorFailureToOpenClaw(params.authStorePath, {
+          const mirrored = await mirrorFailureToOpenClaw(params.authStorePath, {
             profileId: current.profileId,
             reason: toMirroredFailureReason(classified.reason),
             now
           });
+          applyCooldown(account, now, classified.normalizedCode, mirrored.cooldownUntil);
           await saveRouterState(params.routerStatePath, state);
         }
       } else if (classified.action === "cooldown") {
-        applyCooldown(account, now, classified.normalizedCode);
-        await mirrorFailureToOpenClaw(params.authStorePath, {
+        const mirrored = await mirrorFailureToOpenClaw(params.authStorePath, {
           profileId: current.profileId,
           reason: toMirroredFailureReason(classified.reason),
           now
         });
+        applyCooldown(account, now, classified.normalizedCode, mirrored.cooldownUntil);
         await saveRouterState(params.routerStatePath, state);
       } else {
         account.status = "disabled";
@@ -130,11 +130,20 @@ function markSuccess(state: RouterState, alias: string, now: Date): void {
   account.lastErrorCode = undefined;
 }
 
-function applyCooldown(account: RouterAccount, now: Date, errorCode: string): void {
+function applyCooldown(
+  account: RouterAccount,
+  now: Date,
+  errorCode: string,
+  mirroredCooldownUntil?: number
+): void {
   account.status = "cooldown";
   account.lastFailureAt = now.toISOString();
   account.lastErrorCode = errorCode;
-  account.cooldownUntil = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+  const cooldownMs =
+    typeof mirroredCooldownUntil === "number" && Number.isFinite(mirroredCooldownUntil)
+      ? mirroredCooldownUntil
+      : now.getTime() + 60 * 60 * 1000;
+  account.cooldownUntil = new Date(cooldownMs).toISOString();
 }
 
 function errorToString(error: unknown): string {
