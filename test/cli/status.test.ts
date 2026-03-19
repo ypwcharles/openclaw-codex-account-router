@@ -31,7 +31,7 @@ describe("status cli", () => {
               priority: 10,
               status: "cooldown",
               enabled: true,
-              cooldownUntil: "2099-01-01T00:00:00.000Z"
+              cooldownUntil: "2020-01-01T00:00:00.000Z"
             },
             {
               alias: "acct-b",
@@ -40,6 +40,15 @@ describe("status cli", () => {
               priority: 20,
               status: "healthy",
               enabled: true
+            },
+            {
+              alias: "acct-c",
+              profileId: "openai-codex:c@example.com",
+              provider: "openai-codex",
+              priority: 30,
+              status: "cooldown",
+              enabled: true,
+              cooldownUntil: "2099-01-01T00:00:00.000Z"
             }
           ],
           lastProviderFallbackReason: "Codex account pool exhausted"
@@ -68,9 +77,13 @@ describe("status cli", () => {
       currentOrder: string[];
       nextCandidate?: string;
       lastProviderFallbackReason?: string;
+      cooldowns: Array<{ alias: string; until?: string }>;
     };
-    expect(payload.currentOrder).toEqual(["acct-a", "acct-b"]);
-    expect(payload.nextCandidate).toBe("acct-b");
+    expect(payload.currentOrder).toEqual(["acct-a", "acct-b", "acct-c"]);
+    expect(payload.cooldowns).toEqual([
+      { alias: "acct-c", until: "2099-01-01T00:00:00.000Z" }
+    ]);
+    expect(payload.nextCandidate).toBe("acct-a");
     expect(payload.lastProviderFallbackReason).toBe("Codex account pool exhausted");
   });
 });

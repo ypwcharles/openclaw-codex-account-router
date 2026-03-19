@@ -17,6 +17,7 @@ export async function getRouterStatus(params: {
   now?: Date;
 }): Promise<RouterStatusPayload> {
   const now = params.now ?? new Date();
+  const nowMs = now.getTime();
   const state = await loadRouterState(params.routerStatePath);
   const currentOrder = state.accounts
     .slice()
@@ -26,6 +27,7 @@ export async function getRouterStatus(params: {
   const nextCandidate = activeAccounts[0];
   const cooldowns = state.accounts
     .filter((account) => account.status === "cooldown")
+    .filter((account) => isEffectiveCooldown(account.cooldownUntil, nowMs))
     .map((account) => ({ alias: account.alias, until: account.cooldownUntil }));
   const lastErrorCodes = state.accounts.map((account) => ({
     alias: account.alias,
@@ -40,6 +42,17 @@ export async function getRouterStatus(params: {
     lastErrorCodes,
     lastProviderFallbackReason: state.lastProviderFallbackReason
   };
+}
+
+function isEffectiveCooldown(cooldownUntil: string | undefined, nowMs: number): boolean {
+  if (!cooldownUntil) {
+    return true;
+  }
+  const parsed = Date.parse(cooldownUntil);
+  if (!Number.isFinite(parsed)) {
+    return true;
+  }
+  return parsed > nowMs;
 }
 
 export function registerStatusCommand(program: Command): void {
