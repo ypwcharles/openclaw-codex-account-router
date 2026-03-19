@@ -75,6 +75,22 @@ export async function clearProfileFailureState(
   });
 }
 
+export async function clearProfileCooldown(
+  authStorePath: string,
+  profileId: string
+): Promise<void> {
+  await updateOpenClawStore(authStorePath, (store) => {
+    if (!store.usageStats?.[profileId]) {
+      return;
+    }
+    const existing = store.usageStats[profileId] ?? {};
+    store.usageStats[profileId] = {
+      ...existing,
+      cooldownUntil: undefined
+    };
+  });
+}
+
 async function updateOpenClawStore(
   authStorePath: string,
   updater: (store: OpenClawStore) => void

@@ -240,7 +240,10 @@ describe("bind account", () => {
       accounts: Array<{ alias: string; status: string; lastErrorCode?: string; cooldownUntil?: string }>;
     };
     const auth = JSON.parse(await readFile(authStorePath, "utf8")) as {
-      usageStats?: Record<string, { cooldownUntil?: number }>;
+      usageStats?: Record<
+        string,
+        { cooldownUntil?: number; disabledUntil?: number; disabledReason?: string }
+      >;
     };
 
     const acctA = router.accounts.find((account) => account.alias === "acct-a");
@@ -250,5 +253,70 @@ describe("bind account", () => {
     expect(acctA?.cooldownUntil).toBeUndefined();
     expect(acctB?.status).toBe("disabled");
     expect(auth.usageStats?.["openai-codex:user@example.com"]?.cooldownUntil).toBeUndefined();
+    expect(auth.usageStats?.["openai-codex:user2@example.com"]?.disabledUntil).toBeUndefined();
+    expect(auth.usageStats?.["openai-codex:user2@example.com"]?.disabledReason).toBeUndefined();
+  });
+
+  it("cooldown clear does not clear mirrored disabled markers", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "bind-account-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:user@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "disabled",
+              enabled: true,
+              lastErrorCode: "auth_revoked"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:user@example.com": { type: "oauth", provider: "openai-codex", access: "a" }
+          },
+          usageStats: {
+            "openai-codex:user@example.com": {
+              disabledUntil: 8_888_888_888_888,
+              disabledReason: "auth_permanent"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await clearAccountCooldown({
+      routerStatePath,
+      authStorePath,
+      alias: "acct-a"
+    });
+
+    const auth = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      usageStats?: Record<string, { disabledUntil?: number; disabledReason?: string }>;
+    };
+    expect(auth.usageStats?.["openai-codex:user@example.com"]?.disabledUntil).toBe(8_888_888_888_888);
+    expect(auth.usageStats?.["openai-codex:user@example.com"]?.disabledReason).toBe("auth_permanent");
   });
 });

@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { loadRouterState, saveRouterState } from "./store.js";
 import type { RouterAccount, RouterState } from "./types.js";
-import { clearProfileFailureState, syncCodexOrder } from "../router/openclaw_auth_store.js";
+import {
+  clearProfileCooldown,
+  clearProfileFailureState,
+  syncCodexOrder
+} from "../router/openclaw_auth_store.js";
 
 type OpenClawAuthProfile = {
   provider?: string;
@@ -192,7 +196,7 @@ export async function clearAccountCooldown(params: {
     lastErrorCode: current.status === "cooldown" ? undefined : current.lastErrorCode
   };
   await saveRouterState(params.routerStatePath, state);
-  await clearProfileFailureState(params.authStorePath, current.profileId);
+  await clearProfileCooldown(params.authStorePath, current.profileId);
   return state;
 }
 

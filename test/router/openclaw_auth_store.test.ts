@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  clearProfileCooldown,
   clearProfileFailureState,
   mirrorFailureToOpenClaw,
   syncCodexOrder
@@ -118,5 +119,53 @@ describe("openclaw auth bridge", () => {
     expect(next.usageStats["openai-codex:a@example.com"]?.cooldownUntil).toBeUndefined();
     expect(next.usageStats["openai-codex:a@example.com"]?.disabledUntil).toBeUndefined();
     expect(next.usageStats["openai-codex:a@example.com"]?.disabledReason).toBeUndefined();
+  });
+
+  it("clears only cooldown marker without touching disable marker", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-auth-"));
+    cleanupPaths.push(dir);
+    const authPath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      authPath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "a"
+            }
+          },
+          usageStats: {
+            "openai-codex:a@example.com": {
+              cooldownUntil: 9_999_999_999_999,
+              disabledUntil: 8_888_888_888_888,
+              disabledReason: "auth_permanent"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await clearProfileCooldown(authPath, "openai-codex:a@example.com");
+
+    const next = JSON.parse(await readFile(authPath, "utf8")) as {
+      usageStats: Record<
+        string,
+        {
+          cooldownUntil?: number;
+          disabledUntil?: number;
+          disabledReason?: string;
+        }
+      >;
+    };
+    expect(next.usageStats["openai-codex:a@example.com"]?.cooldownUntil).toBeUndefined();
+    expect(next.usageStats["openai-codex:a@example.com"]?.disabledUntil).toBe(8_888_888_888_888);
+    expect(next.usageStats["openai-codex:a@example.com"]?.disabledReason).toBe("auth_permanent");
   });
 });
