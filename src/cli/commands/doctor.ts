@@ -1,0 +1,102 @@
+import { access, constants, readFile } from "node:fs/promises";
+import { execa } from "execa";
+import { Command } from "commander";
+import { loadRouterState } from "../../account_store/store.js";
+import { resolveAuthStorePath, resolveRouterStatePath } from "../../shared/paths.js";
+
+type DoctorCheck = {
+  id: string;
+  ok: boolean;
+  detail: string;
+};
+
+export async function runDoctor(params: {
+  routerStatePath: string;
+  authStorePath: string;
+}): Promise<{ ok: boolean; checks: DoctorCheck[] }> {
+  const checks: DoctorCheck[] = [];
+
+  checks.push(await checkOpenClawBinary());
+  checks.push(await checkAuthStoreAccess(params.authStorePath));
+  checks.push(...(await checkAliasMappings(params.routerStatePath, params.authStorePath)));
+
+  return {
+    ok: checks.every((check) => check.ok),
+    checks
+  };
+}
+
+export function registerDoctorCommand(program: Command): void {
+  program
+    .command("doctor")
+    .description("Validate account router wiring")
+    .option("--router-state <path>", "Router state path")
+    .option("--auth-store <path>", "OpenClaw auth store path")
+    .option("--json", "Output JSON", false)
+    .action(async (opts) => {
+      const result = await runDoctor({
+        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
+        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
+      });
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      for (const check of result.checks) {
+        console.log(`${check.ok ? "OK" : "FAIL"} ${check.id}: ${check.detail}`);
+      }
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+    });
+}
+
+async function checkOpenClawBinary(): Promise<DoctorCheck> {
+  try {
+    await execa("openclaw", ["--help"], { reject: false });
+    return { id: "openclaw_binary", ok: true, detail: "openclaw is available" };
+  } catch {
+    return { id: "openclaw_binary", ok: false, detail: "openclaw binary not found in PATH" };
+  }
+}
+
+async function checkAuthStoreAccess(authStorePath: string): Promise<DoctorCheck> {
+  try {
+    await access(authStorePath, constants.R_OK | constants.W_OK);
+    return { id: "auth_store_access", ok: true, detail: authStorePath };
+  } catch {
+    return { id: "auth_store_access", ok: false, detail: `cannot read/write ${authStorePath}` };
+  }
+}
+
+async function checkAliasMappings(
+  routerStatePath: string,
+  authStorePath: string
+): Promise<DoctorCheck[]> {
+  const state = await loadRouterState(routerStatePath);
+  const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+    profiles?: Record<string, unknown>;
+  };
+  const profiles = authStore.profiles ?? {};
+  const checks: DoctorCheck[] = [];
+
+  const missing = state.accounts
+    .filter((account) => !(account.profileId in profiles))
+    .map((account) => `${account.alias}:${account.profileId}`);
+  checks.push({
+    id: "alias_profile_mapping",
+    ok: missing.length === 0,
+    detail: missing.length === 0 ? "all aliases map to existing profiles" : missing.join(", ")
+  });
+
+  const defaultUsers = state.accounts.filter((account) => account.profileId === "openai-codex:default");
+  checks.push({
+    id: "default_profile_duplicate",
+    ok: defaultUsers.length <= 1,
+    detail:
+      defaultUsers.length <= 1
+        ? "default profile used by at most one alias"
+        : `default profile used by multiple aliases: ${defaultUsers.map((x) => x.alias).join(", ")}`
+  });
+  return checks;
+}

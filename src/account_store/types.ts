@@ -11,9 +11,11 @@ export type RouterAccount = {
   lastFailureAt?: string;
   lastErrorCode?: string;
   cooldownUntil?: string;
+  defaultProfileFingerprint?: string;
 };
 
 export type RouterState = {
   version: 1;
   accounts: RouterAccount[];
+  lastProviderFallbackReason?: string;
 };

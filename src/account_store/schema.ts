@@ -10,10 +10,12 @@ export const RouterAccountSchema = z.object({
   lastSuccessAt: z.string().datetime().optional(),
   lastFailureAt: z.string().datetime().optional(),
   lastErrorCode: z.string().min(1).optional(),
-  cooldownUntil: z.string().datetime().optional()
+  cooldownUntil: z.string().datetime().optional(),
+  defaultProfileFingerprint: z.string().min(1).optional()
 });
 
 export const RouterStateSchema = z.object({
   version: z.literal(1),
-  accounts: z.array(RouterAccountSchema)
+  accounts: z.array(RouterAccountSchema),
+  lastProviderFallbackReason: z.string().min(1).optional()
 });
