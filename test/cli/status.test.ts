@@ -14,10 +14,12 @@ afterEach(async () => {
 });
 
 describe("status cli", () => {
-  it("shows current pool and next candidate", async () => {
+  it("shows integration health along with routing health", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "status-cli-"));
     cleanupPaths.push(dir);
     const routerStatePath = path.join(dir, "router-state.json");
+    const integrationStatePath = path.join(dir, "integration.json");
+
     await writeFile(
       routerStatePath,
       JSON.stringify(
@@ -59,6 +61,24 @@ describe("status cli", () => {
       "utf8"
     );
 
+    await writeFile(
+      integrationStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          platform: "linux",
+          installRoot: dir,
+          shimPath: path.join(dir, "bin", "openclaw"),
+          realOpenClawPath: "/usr/bin/openclaw",
+          servicePath: path.join(dir, "services", "openclaw-router-repair.service"),
+          lastSetupAt: "2026-03-19T10:00:00.000Z"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
     const { stdout } = await execa(
       "node",
       [
@@ -68,6 +88,8 @@ describe("status cli", () => {
         "status",
         "--router-state",
         routerStatePath,
+        "--integration-state",
+        integrationStatePath,
         "--json"
       ],
       { cwd: repoRoot }
@@ -78,12 +100,21 @@ describe("status cli", () => {
       nextCandidate?: string;
       lastProviderFallbackReason?: string;
       cooldowns: Array<{ alias: string; until?: string }>;
+      integration: {
+        installed: boolean;
+        shimPath?: string;
+        realOpenClawPath?: string;
+      };
     };
+
     expect(payload.currentOrder).toEqual(["acct-a", "acct-b", "acct-c"]);
     expect(payload.cooldowns).toEqual([
       { alias: "acct-c", until: "2099-01-01T00:00:00.000Z" }
     ]);
     expect(payload.nextCandidate).toBe("acct-a");
     expect(payload.lastProviderFallbackReason).toBe("Codex account pool exhausted");
+    expect(payload.integration.installed).toBe(true);
+    expect(payload.integration.shimPath).toContain("openclaw");
+    expect(payload.integration.realOpenClawPath).toBe("/usr/bin/openclaw");
   });
 });

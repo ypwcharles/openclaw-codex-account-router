@@ -1,4 +1,6 @@
 import path from "node:path";
+import { detectIntegrationPlatform, resolveHomeDir } from "../integration/discovery.js";
+import { resolveIntegrationPaths } from "../integration/paths.js";
 import { resolveDefaultOpenClawAuthStorePath } from "../router/openclaw_paths.js";
 
 export function resolveRouterStatePath(explicit?: string): string {
@@ -15,4 +17,14 @@ export function resolveAuthStorePath(explicit?: string): string {
     return path.resolve(raw);
   }
   return resolveDefaultOpenClawAuthStorePath();
+}
+
+export function resolveIntegrationStatePath(explicit?: string): string {
+  const raw = explicit?.trim();
+  if (raw) {
+    return path.resolve(raw);
+  }
+  const homeDir = resolveHomeDir();
+  const platform = detectIntegrationPlatform();
+  return resolveIntegrationPaths(homeDir, platform).integrationStatePath;
 }

@@ -1,52 +1,16 @@
 import { Command } from "commander";
 import {
   bindAccount,
-  clearAccountCooldown,
   listAccounts,
   setAccountEnabled,
   setAccountOrderByAlias
 } from "../../account_store/bind.js";
 import { resolveAuthStorePath, resolveRouterStatePath } from "../../shared/paths.js";
 
-export function registerAccountsCommands(
-  program: Command,
-  opts?: {
-    hidden?: boolean;
-  }
-): void {
-  const accounts = new Command("accounts").description("Manage codex account bindings");
-  if (opts?.hidden) {
-    program.addCommand(accounts, { hidden: true });
-  } else {
-    program.addCommand(accounts);
-  }
+export function registerAccountCommand(program: Command): void {
+  const account = program.command("account").description("Manage routed codex accounts");
 
-  accounts
-    .command("bind")
-    .requiredOption("--alias <alias>", "Account alias")
-    .requiredOption("--profile-id <profileId>", "OpenClaw auth profile id")
-    .option("--priority <priority>", "Priority (lower is earlier)")
-    .option("--force-default", "Allow binding openai-codex:default", false)
-    .option("--router-state <path>", "Router state path")
-    .option("--auth-store <path>", "OpenClaw auth store path")
-    .action(async (opts) => {
-      const result = await bindAccount({
-        alias: String(opts.alias),
-        profileId: String(opts.profileId),
-        priority:
-          typeof opts.priority === "string" && /^\d+$/.test(opts.priority)
-            ? Number(opts.priority)
-            : undefined,
-        forceDefault: Boolean(opts.forceDefault),
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
-      });
-      console.log(
-        `bound ${result.account.alias} -> ${result.account.profileId} (priority=${result.account.priority})`
-      );
-    });
-
-  accounts
+  account
     .command("list")
     .option("--router-state <path>", "Router state path")
     .action(async (opts) => {
@@ -55,14 +19,45 @@ export function registerAccountsCommands(
         console.log("(no accounts)");
         return;
       }
-      for (const account of accounts) {
+      for (const item of accounts) {
         console.log(
-          `${account.alias}\t${account.profileId}\tpriority=${account.priority}\tenabled=${account.enabled}\tstatus=${account.status}`
+          `${item.alias}\t${item.profileId}\tpriority=${item.priority}\tenabled=${item.enabled}\tstatus=${item.status}`
         );
       }
     });
 
-  accounts
+  account
+    .command("add")
+    .requiredOption("--profile-id <profileId>", "OpenClaw auth profile id")
+    .option("--alias <alias>", "Account alias (default: next acct-N)")
+    .option("--priority <priority>", "Priority (lower is earlier)")
+    .option("--force-default", "Allow binding openai-codex:default", false)
+    .option("--router-state <path>", "Router state path")
+    .option("--auth-store <path>", "OpenClaw auth store path")
+    .action(async (opts) => {
+      const routerStatePath = resolveRouterStatePath(opts.routerState as string | undefined);
+      const alias =
+        typeof opts.alias === "string" && opts.alias.trim()
+          ? opts.alias.trim()
+          : await resolveNextAlias(routerStatePath);
+
+      const result = await bindAccount({
+        alias,
+        profileId: String(opts.profileId),
+        priority:
+          typeof opts.priority === "string" && /^\d+$/u.test(opts.priority)
+            ? Number(opts.priority)
+            : undefined,
+        forceDefault: Boolean(opts.forceDefault),
+        routerStatePath,
+        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
+      });
+      console.log(
+        `bound ${result.account.alias} -> ${result.account.profileId} (priority=${result.account.priority})`
+      );
+    });
+
+  account
     .command("enable")
     .argument("<alias>", "Account alias")
     .option("--router-state <path>", "Router state path")
@@ -77,7 +72,7 @@ export function registerAccountsCommands(
       console.log(`enabled ${alias}`);
     });
 
-  accounts
+  account
     .command("disable")
     .argument("<alias>", "Account alias")
     .option("--router-state <path>", "Router state path")
@@ -92,10 +87,8 @@ export function registerAccountsCommands(
       console.log(`disabled ${alias}`);
     });
 
-  const order = accounts.command("order").description("Manage account order");
-
-  order
-    .command("set")
+  account
+    .command("order")
     .argument("<aliases...>", "Aliases in desired order")
     .option("--router-state <path>", "Router state path")
     .option("--auth-store <path>", "OpenClaw auth store path")
@@ -107,24 +100,14 @@ export function registerAccountsCommands(
       });
       console.log(`updated order: ${(aliases as string[]).join(", ")}`);
     });
+}
 
-  const cooldown = new Command("cooldown").description("Manage cooldown state");
-  if (opts?.hidden) {
-    program.addCommand(cooldown, { hidden: true });
-  } else {
-    program.addCommand(cooldown);
+async function resolveNextAlias(routerStatePath: string): Promise<string> {
+  const accounts = await listAccounts(routerStatePath);
+  const used = new Set(accounts.map((item) => item.alias));
+  let index = 1;
+  while (used.has(`acct-${index}`)) {
+    index += 1;
   }
-  cooldown
-    .command("clear")
-    .argument("<alias>", "Account alias")
-    .option("--router-state <path>", "Router state path")
-    .option("--auth-store <path>", "OpenClaw auth store path")
-    .action(async (alias, opts) => {
-      await clearAccountCooldown({
-        alias: String(alias),
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
-      });
-      console.log(`cleared cooldown for ${alias}`);
-    });
+  return `acct-${index}`;
 }
