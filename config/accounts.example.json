@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "accounts": [
+    {
+      "alias": "codex-main",
+      "profileId": "openai-codex:main@example.com",
+      "provider": "openai-codex",
+      "priority": 10,
+      "status": "healthy",
+      "enabled": true
+    },
+    {
+      "alias": "codex-backup",
+      "profileId": "openai-codex:backup@example.com",
+      "provider": "openai-codex",
+      "priority": 20,
+      "status": "unknown",
+      "enabled": true
+    }
+  ]
+}
