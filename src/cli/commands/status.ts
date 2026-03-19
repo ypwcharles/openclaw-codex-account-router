@@ -99,9 +99,9 @@ export function registerStatusCommand(program: Command): void {
     .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
-      const integrationStatePath = opts.integrationState
-        ? resolveIntegrationStatePath(opts.integrationState as string | undefined)
-        : undefined;
+      const integrationStatePath = resolveIntegrationStatePath(
+        opts.integrationState as string | undefined
+      );
 
       const payload = await getRouterStatus({
         routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),

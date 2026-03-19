@@ -49,9 +49,7 @@ export function registerDoctorCommand(program: Command): void {
       const result = await runDoctor({
         routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
         authStorePath: resolveAuthStorePath(opts.authStore as string | undefined),
-        integrationStatePath: opts.integrationState
-          ? resolveIntegrationStatePath(opts.integrationState as string | undefined)
-          : undefined
+        integrationStatePath: resolveIntegrationStatePath(opts.integrationState as string | undefined)
       });
       if (opts.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -68,8 +66,15 @@ export function registerDoctorCommand(program: Command): void {
 
 async function checkOpenClawBinary(): Promise<DoctorCheck> {
   try {
-    await execa("openclaw", ["--help"], { reject: false });
-    return { id: "openclaw_binary", ok: true, detail: "openclaw is available" };
+    const result = await execa("openclaw", ["--help"], { reject: false });
+    if (result.exitCode === 0) {
+      return { id: "openclaw_binary", ok: true, detail: "openclaw is available" };
+    }
+    return {
+      id: "openclaw_binary",
+      ok: false,
+      detail: `openclaw --help exited with status ${result.exitCode ?? "unknown"}`
+    };
   } catch {
     return { id: "openclaw_binary", ok: false, detail: "openclaw binary not found in PATH" };
   }

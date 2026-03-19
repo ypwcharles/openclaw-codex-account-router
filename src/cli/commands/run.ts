@@ -57,9 +57,10 @@ export function registerRunCommand(program: Command): void {
     .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (commandArgs, opts) => {
-      const integrationState = opts.integrationState
-        ? await loadIntegrationState(resolveIntegrationStatePath(opts.integrationState as string | undefined))
-        : undefined;
+      const integrationStatePath = resolveIntegrationStatePath(
+        opts.integrationState as string | undefined
+      );
+      const integrationState = await loadIntegrationState(integrationStatePath);
 
       const list = (commandArgs as string[]).map(String);
       const command = list[0] ?? "openclaw";

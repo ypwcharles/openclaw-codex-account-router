@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -116,5 +116,65 @@ describe("status cli", () => {
     expect(payload.integration.installed).toBe(true);
     expect(payload.integration.shimPath).toContain("openclaw");
     expect(payload.integration.realOpenClawPath).toBe("/usr/bin/openclaw");
+  });
+
+  it("auto-loads default integration state from HOME when option is omitted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "status-default-intg-"));
+    cleanupPaths.push(dir);
+    const homeDir = path.join(dir, "home");
+    const routerStatePath = path.join(dir, "router-state.json");
+    const defaultIntegrationStatePath = path.join(homeDir, ".openclaw-router", "integration.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await mkdir(path.dirname(defaultIntegrationStatePath), { recursive: true });
+    await writeFile(
+      defaultIntegrationStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          platform: "linux",
+          installRoot: path.join(homeDir, ".openclaw-router"),
+          shimPath: path.join(homeDir, ".openclaw-router", "bin", "openclaw"),
+          realOpenClawPath: "/usr/bin/openclaw",
+          servicePath: path.join(homeDir, ".openclaw-router", "services", "openclaw-router-repair.service"),
+          lastSetupAt: "2026-03-19T10:00:00.000Z"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const { stdout } = await execa(
+      "node",
+      ["--import", "tsx", "src/cli/main.ts", "status", "--router-state", routerStatePath, "--json"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: homeDir
+        }
+      }
+    );
+
+    const payload = JSON.parse(stdout) as {
+      integration: {
+        installed: boolean;
+        integrationStatePath?: string;
+      };
+    };
+    expect(payload.integration.installed).toBe(true);
+    expect(payload.integration.integrationStatePath).toBe(defaultIntegrationStatePath);
   });
 });

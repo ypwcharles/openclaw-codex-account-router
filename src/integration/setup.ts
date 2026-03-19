@@ -1,5 +1,7 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { bindAccount, listAccounts } from "../account_store/bind.js";
 import { loadRouterState, saveRouterState } from "../account_store/store.js";
 import {
@@ -31,6 +33,7 @@ export async function runSetup(
     routerStatePath?: string;
     authStorePath?: string;
     integrationStatePath?: string;
+    routerEntryPath?: string;
     projectRoot?: string;
   } = {},
   deps?: {
@@ -54,7 +57,13 @@ export async function runSetup(
   const discoveredProfiles = await discover(authStorePath);
   const realOpenClawPath = await resolveBinary();
 
-  await installRouterCommandLauncher(paths.routerCommandPath, params.projectRoot ?? process.cwd());
+  const routerEntryPath =
+    params.routerEntryPath ??
+    (params.projectRoot
+      ? path.join(params.projectRoot, "src", "cli", "main.ts")
+      : resolveDefaultRouterEntryPath());
+
+  await installRouterCommandLauncher(paths.routerCommandPath, routerEntryPath);
 
   const currentState = await loadRouterState(routerStatePath);
   await saveRouterState(routerStatePath, currentState);
@@ -164,12 +173,41 @@ function resolveNextAlias(existingAliases: Set<string>, start: number): string {
   return `acct-${index}`;
 }
 
-async function installRouterCommandLauncher(routerCommandPath: string, projectRoot: string): Promise<void> {
-  const cliEntry = path.join(projectRoot, "src", "cli", "main.ts");
-  const launcher = `#!/usr/bin/env bash\nset -euo pipefail\nexec node --import tsx ${shellEscape(cliEntry)} "$@"\n`;
+async function installRouterCommandLauncher(
+  routerCommandPath: string,
+  routerEntryPath: string
+): Promise<void> {
+  const entryPath = path.resolve(routerEntryPath);
+  const usesTsx = isTypeScriptEntry(entryPath);
+  const launcher = usesTsx
+    ? `#!/usr/bin/env bash\nset -euo pipefail\nexec node --import tsx ${shellEscape(entryPath)} "$@"\n`
+    : `#!/usr/bin/env bash\nset -euo pipefail\nexec node ${shellEscape(entryPath)} "$@"\n`;
   await mkdir(path.dirname(routerCommandPath), { recursive: true });
   await writeFile(routerCommandPath, launcher, "utf8");
   await chmod(routerCommandPath, 0o755);
+}
+
+function resolveDefaultRouterEntryPath(): string {
+  const currentFile = fileURLToPath(import.meta.url);
+  const ext = path.extname(currentFile);
+
+  // When running from source, prefer built CLI if available so launcher is
+  // stable outside the repo cwd and does not require tsx at runtime.
+  if (ext === ".ts") {
+    const repoRoot = path.resolve(path.dirname(currentFile), "..", "..");
+    const distEntry = path.join(repoRoot, "dist", "src", "cli", "main.js");
+    if (existsSync(distEntry)) {
+      return distEntry;
+    }
+  }
+
+  const nextExt = ext === ".ts" || ext === ".js" ? ext : ".js";
+  return path.resolve(path.dirname(currentFile), "..", "cli", `main${nextExt}`);
+}
+
+function isTypeScriptEntry(entryPath: string): boolean {
+  const lower = entryPath.toLowerCase();
+  return lower.endsWith(".ts") || lower.endsWith(".mts") || lower.endsWith(".cts");
 }
 
 function shellEscape(value: string): string {
