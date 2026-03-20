@@ -53,12 +53,21 @@ export function registerDoctorCommand(program: Command): void {
     .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
+      const integrationStatePath = resolveOptionalIntegrationStatePath(
+        opts.integrationState as string | undefined
+      );
+      const integrationState = integrationStatePath
+        ? await loadIntegrationState(integrationStatePath)
+        : undefined;
+
       const result = await runDoctor({
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined),
-        integrationStatePath: resolveOptionalIntegrationStatePath(
-          opts.integrationState as string | undefined
-        )
+        routerStatePath: resolveRouterStatePath(
+          (opts.routerState as string | undefined) ?? integrationState?.routerStatePath
+        ),
+        authStorePath: resolveAuthStorePath(
+          (opts.authStore as string | undefined) ?? integrationState?.authStorePath
+        ),
+        integrationStatePath
       });
       if (opts.json) {
         console.log(JSON.stringify(result, null, 2));

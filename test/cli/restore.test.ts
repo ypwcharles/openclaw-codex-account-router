@@ -70,5 +70,78 @@ describe("restore flow", () => {
     expect(result.authStorePath).toBe(authStorePath);
     expect(JSON.parse(restoredRaw)).toEqual(JSON.parse(originalAuth));
   });
-});
 
+  it("preserves the original setup backup across repeated setup runs", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "restore-flow-repeat-"));
+    cleanupPaths.push(homeDir);
+
+    const authStorePath = path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
+    await mkdir(path.dirname(authStorePath), { recursive: true });
+
+    const originalAuth = JSON.stringify(
+      {
+        version: 1,
+        profiles: {
+          "openai-codex:a@example.com": { provider: "openai-codex", access: "a" }
+        },
+        order: {},
+        usageStats: {}
+      },
+      null,
+      2
+    );
+    await writeFile(authStorePath, originalAuth, "utf8");
+
+    const deps = {
+      discoverOpenClawProfiles: async () => ["openai-codex:a@example.com"],
+      resolveOpenClawBinary: async () => "/usr/bin/openclaw"
+    };
+
+    const setupResult = await runSetup(
+      {
+        homeDir,
+        platform: "linux",
+        authStorePath
+      },
+      deps
+    );
+
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": { provider: "openai-codex", access: "mutated" }
+          },
+          order: { "openai-codex": ["openai-codex:a@example.com"] },
+          usageStats: {
+            "openai-codex:a@example.com": {
+              lastUsedAt: "2026-03-20T00:00:00.000Z"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await runSetup(
+      {
+        homeDir,
+        platform: "linux",
+        authStorePath
+      },
+      deps
+    );
+
+    const result = await runRestore({
+      integrationStatePath: setupResult.integrationStatePath
+    });
+    const restoredRaw = await readFile(authStorePath, "utf8");
+
+    expect(result.restored).toBe(true);
+    expect(JSON.parse(restoredRaw)).toEqual(JSON.parse(originalAuth));
+  });
+});

@@ -141,7 +141,7 @@ describe("setup flow", () => {
     expect(stdout).toContain("setup");
   });
 
-  it("refreshes auth backup on every setup rerun", async () => {
+  it("preserves the original auth backup on setup rerun", async () => {
     const homeDir = await mkdtemp(path.join(tmpdir(), "setup-rerun-backup-"));
     cleanupPaths.push(homeDir);
 
@@ -212,7 +212,7 @@ describe("setup flow", () => {
     }
 
     const backupRaw = await readFile(integrationState.authStoreBackupPath, "utf8");
-    expect(JSON.parse(backupRaw)).toEqual(JSON.parse(secondAuthStoreRaw));
+    expect(JSON.parse(backupRaw)).toEqual(JSON.parse(firstAuthStoreRaw));
   });
 
   it("prefers dist launcher entry for projectRoot installs", async () => {

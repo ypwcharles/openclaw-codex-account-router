@@ -175,6 +175,68 @@ describe("doctor command", () => {
     15000
   );
 
+  it(
+    "auto-discovers router and auth paths from integration state when flags are omitted",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "doctor-default-paths-"));
+      cleanupPaths.push(dir);
+
+      const homeDir = path.join(dir, "home");
+      const routerStatePath = path.join(dir, "custom-router-state.json");
+      const authStorePath = path.join(dir, "custom-auth-profiles.json");
+      const integrationStatePath = path.join(homeDir, ".openclaw-router", "integration.json");
+      const shimPath = path.join(homeDir, ".openclaw-router", "bin", "openclaw");
+      const servicePath = path.join(homeDir, ".openclaw-router", "services", "openclaw-router-repair.service");
+
+      await writeFile(routerStatePath, JSON.stringify({ version: 1, accounts: [] }, null, 2), "utf8");
+      await writeFile(
+        authStorePath,
+        JSON.stringify({ version: 1, profiles: {}, order: {}, usageStats: {} }, null, 2),
+        "utf8"
+      );
+      await mkdir(path.dirname(integrationStatePath), { recursive: true });
+      await writeFile(
+        integrationStatePath,
+        JSON.stringify(
+          {
+            version: 1,
+            platform: "linux",
+            installRoot: path.join(homeDir, ".openclaw-router"),
+            shimPath,
+            realOpenClawPath: "/usr/bin/openclaw",
+            servicePath,
+            lastSetupAt: "2026-03-19T10:00:00.000Z",
+            routerStatePath,
+            authStorePath
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+
+      const { stdout } = await execa(
+        "node",
+        ["--import", "tsx", "src/cli/main.ts", "doctor", "--json"],
+        {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            HOME: homeDir
+          }
+        }
+      );
+
+      const payload = JSON.parse(stdout) as { checks: Array<{ id: string; detail: string }> };
+      const authStoreAccess = payload.checks.find((check) => check.id === "auth_store_access");
+      const integrationReadable = payload.checks.find((check) => check.id === "integration_state_readable");
+
+      expect(authStoreAccess?.detail).toBe(authStorePath);
+      expect(integrationReadable?.detail).toBe(integrationStatePath);
+    },
+    15000
+  );
+
   it("marks openclaw_binary healthy when openclaw is executable even if help is slow", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "doctor-openclaw-exit-"));
     cleanupPaths.push(dir);
