@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import lockfile from "proper-lockfile";
+import { getOpenClawAuthLockPath } from "../router/openclaw_auth_lock.js";
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const OPENAI_CODEX_DEFAULT_PROFILE_ID = "openai-codex:default";
@@ -10,6 +11,7 @@ type OpenClawAuthProfile = {
   provider?: string;
   access?: string;
   refresh?: string;
+  [key: string]: unknown;
 };
 
 type OpenClawAuthStore = {
@@ -41,11 +43,15 @@ export async function normalizeCodexAuthProfiles(
 
     store.profiles = store.profiles ?? {};
     const existingTarget = store.profiles[nextProfileId];
-    if (existingTarget && !profilesEquivalent(existingTarget, profile)) {
+    if (
+      existingTarget &&
+      existingTarget.provider &&
+      existingTarget.provider !== OPENAI_CODEX_PROVIDER
+    ) {
       return {} as Record<string, string>;
     }
 
-    store.profiles[nextProfileId] = existingTarget ?? profile;
+    store.profiles[nextProfileId] = mergeAuthProfiles(existingTarget, profile);
     delete store.profiles[OPENAI_CODEX_DEFAULT_PROFILE_ID];
 
     if (store.order?.[OPENAI_CODEX_PROVIDER]) {
@@ -61,8 +67,10 @@ export async function normalizeCodexAuthProfiles(
     }
 
     if (store.usageStats?.[OPENAI_CODEX_DEFAULT_PROFILE_ID] !== undefined) {
-      store.usageStats[nextProfileId] =
-        store.usageStats[nextProfileId] ?? store.usageStats[OPENAI_CODEX_DEFAULT_PROFILE_ID];
+      store.usageStats[nextProfileId] = mergeUsageStats(
+        store.usageStats[nextProfileId],
+        store.usageStats[OPENAI_CODEX_DEFAULT_PROFILE_ID]
+      );
       delete store.usageStats[OPENAI_CODEX_DEFAULT_PROFILE_ID];
     }
 
@@ -77,7 +85,7 @@ async function updateAuthStore<T>(
   updater: (store: OpenClawAuthStore) => T
 ): Promise<T> {
   const dir = path.dirname(authStorePath);
-  const lockPath = path.join(dir, ".auth-store-setup.lock");
+  const lockPath = getOpenClawAuthLockPath(authStorePath);
   const tempPath = `${authStorePath}.tmp`;
 
   await mkdir(dir, { recursive: true });
@@ -131,8 +139,29 @@ function extractEmailFromAccessToken(token: string | undefined): string | undefi
   }
 }
 
-function profilesEquivalent(left: OpenClawAuthProfile, right: OpenClawAuthProfile): boolean {
-  return left.provider === right.provider && left.access === right.access && left.refresh === right.refresh;
+function mergeAuthProfiles(
+  existingTarget: OpenClawAuthProfile | undefined,
+  normalizedProfile: OpenClawAuthProfile
+): OpenClawAuthProfile {
+  return {
+    ...(existingTarget ?? {}),
+    ...normalizedProfile
+  };
+}
+
+function mergeUsageStats(existingTarget: unknown, normalizedProfile: unknown): unknown {
+  if (isPlainObject(existingTarget) && isPlainObject(normalizedProfile)) {
+    return {
+      ...existingTarget,
+      ...normalizedProfile
+    };
+  }
+
+  return normalizedProfile ?? existingTarget;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function dedupeProfileIds(profileIds: string[]): string[] {

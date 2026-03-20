@@ -128,4 +128,97 @@ describe("auth login wrapper", () => {
       "openai-codex:first@example.com"
     ]);
   });
+
+  it("refreshes an existing email-based profile when the same account re-authenticates", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "auth-login-reauth-"));
+    cleanupPaths.push(dir);
+
+    const authStorePath = path.join(dir, "auth-profiles.json");
+    await mkdir(path.dirname(authStorePath), { recursive: true });
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:first@example.com": {
+              provider: "openai-codex",
+              access: buildAccessTokenWithEmail("first@example.com"),
+              refresh: "old-refresh"
+            }
+          },
+          order: {
+            "openai-codex": ["openai-codex:first@example.com"]
+          },
+          usageStats: {
+            "openai-codex:first@example.com": {
+              cooldownUntil: 12345
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const execOpenClawLogin = vi.fn().mockImplementationOnce(async () => {
+      await writeFile(
+        authStorePath,
+        JSON.stringify(
+          {
+            version: 1,
+            profiles: {
+              "openai-codex:first@example.com": {
+                provider: "openai-codex",
+                access: buildAccessTokenWithEmail("first@example.com"),
+                refresh: "old-refresh"
+              },
+              "openai-codex:default": {
+                provider: "openai-codex",
+                access: buildAccessTokenWithEmail("first@example.com"),
+                refresh: "new-refresh"
+              }
+            },
+            order: {
+              "openai-codex": ["openai-codex:default", "openai-codex:first@example.com"]
+            },
+            usageStats: {
+              "openai-codex:first@example.com": {
+                cooldownUntil: 12345
+              },
+              "openai-codex:default": {
+                cooldownUntil: 67890
+              }
+            }
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+      return { exitCode: 0, stdout: "login-reauth", stderr: "" };
+    });
+
+    await runCodexAuthLogin(
+      {
+        authStorePath,
+        command: "openclaw",
+        args: ["models", "auth", "login", "--provider", "openai-codex"]
+      },
+      { execOpenClawLogin }
+    );
+
+    const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      profiles: Record<string, { refresh?: string }>;
+      order?: Record<string, string[]>;
+      usageStats?: Record<string, { cooldownUntil?: number }>;
+    };
+
+    expect(Object.keys(authStore.profiles)).toEqual(["openai-codex:first@example.com"]);
+    expect(authStore.profiles["openai-codex:first@example.com"]?.refresh).toBe("new-refresh");
+    expect(authStore.order?.["openai-codex"]).toEqual(["openai-codex:first@example.com"]);
+    expect(authStore.usageStats?.["openai-codex:first@example.com"]?.cooldownUntil).toBe(67890);
+    expect(authStore.usageStats?.["openai-codex:default"]).toBeUndefined();
+  });
 });

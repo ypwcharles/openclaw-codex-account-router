@@ -6,6 +6,7 @@ import {
   type MirroredFailureReason,
   type OpenClawUsageStats
 } from "./openclaw_usage_mirror.js";
+import { getOpenClawAuthLockPath } from "./openclaw_auth_lock.js";
 
 type OpenClawStore = {
   version: number;
@@ -102,7 +103,7 @@ async function updateOpenClawStore<T>(
   updater: (store: OpenClawStore) => T
 ): Promise<T> {
   const dir = path.dirname(authStorePath);
-  const lockPath = path.join(dir, ".openclaw-auth-profiles.lock");
+  const lockPath = getOpenClawAuthLockPath(authStorePath);
   const tempPath = `${authStorePath}.tmp`;
 
   await mkdir(dir, { recursive: true });
