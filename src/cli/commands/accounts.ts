@@ -6,7 +6,7 @@ import {
   setAccountEnabled,
   setAccountOrderByAlias
 } from "../../account_store/bind.js";
-import { resolveAuthStorePath, resolveRouterStatePath } from "../../shared/paths.js";
+import { resolveInstalledStatePaths } from "../../shared/paths.js";
 
 export function registerAccountsCommands(
   program: Command,
@@ -29,7 +29,13 @@ export function registerAccountsCommands(
     .option("--force-default", "Allow binding openai-codex:default", false)
     .option("--router-state <path>", "Router state path")
     .option("--auth-store <path>", "OpenClaw auth store path")
+    .option("--integration-state <path>", "Integration state path")
     .action(async (opts) => {
+      const { routerStatePath, authStorePath } = await resolveInstalledStatePaths({
+        routerStatePath: opts.routerState as string | undefined,
+        authStorePath: opts.authStore as string | undefined,
+        integrationStatePath: opts.integrationState as string | undefined
+      });
       const result = await bindAccount({
         alias: String(opts.alias),
         profileId: String(opts.profileId),
@@ -38,8 +44,8 @@ export function registerAccountsCommands(
             ? Number(opts.priority)
             : undefined,
         forceDefault: Boolean(opts.forceDefault),
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
+        routerStatePath,
+        authStorePath
       });
       console.log(
         `bound ${result.account.alias} -> ${result.account.profileId} (priority=${result.account.priority})`
@@ -49,8 +55,13 @@ export function registerAccountsCommands(
   accounts
     .command("list")
     .option("--router-state <path>", "Router state path")
+    .option("--integration-state <path>", "Integration state path")
     .action(async (opts) => {
-      const accounts = await listAccounts(resolveRouterStatePath(opts.routerState as string | undefined));
+      const { routerStatePath } = await resolveInstalledStatePaths({
+        routerStatePath: opts.routerState as string | undefined,
+        integrationStatePath: opts.integrationState as string | undefined
+      });
+      const accounts = await listAccounts(routerStatePath);
       if (accounts.length === 0) {
         console.log("(no accounts)");
         return;
@@ -67,12 +78,18 @@ export function registerAccountsCommands(
     .argument("<alias>", "Account alias")
     .option("--router-state <path>", "Router state path")
     .option("--auth-store <path>", "OpenClaw auth store path")
+    .option("--integration-state <path>", "Integration state path")
     .action(async (alias, opts) => {
+      const { routerStatePath, authStorePath } = await resolveInstalledStatePaths({
+        routerStatePath: opts.routerState as string | undefined,
+        authStorePath: opts.authStore as string | undefined,
+        integrationStatePath: opts.integrationState as string | undefined
+      });
       await setAccountEnabled({
         alias: String(alias),
         enabled: true,
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
+        routerStatePath,
+        authStorePath
       });
       console.log(`enabled ${alias}`);
     });
@@ -82,12 +99,18 @@ export function registerAccountsCommands(
     .argument("<alias>", "Account alias")
     .option("--router-state <path>", "Router state path")
     .option("--auth-store <path>", "OpenClaw auth store path")
+    .option("--integration-state <path>", "Integration state path")
     .action(async (alias, opts) => {
+      const { routerStatePath, authStorePath } = await resolveInstalledStatePaths({
+        routerStatePath: opts.routerState as string | undefined,
+        authStorePath: opts.authStore as string | undefined,
+        integrationStatePath: opts.integrationState as string | undefined
+      });
       await setAccountEnabled({
         alias: String(alias),
         enabled: false,
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
+        routerStatePath,
+        authStorePath
       });
       console.log(`disabled ${alias}`);
     });
@@ -99,11 +122,17 @@ export function registerAccountsCommands(
     .argument("<aliases...>", "Aliases in desired order")
     .option("--router-state <path>", "Router state path")
     .option("--auth-store <path>", "OpenClaw auth store path")
+    .option("--integration-state <path>", "Integration state path")
     .action(async (aliases, opts) => {
+      const { routerStatePath, authStorePath } = await resolveInstalledStatePaths({
+        routerStatePath: opts.routerState as string | undefined,
+        authStorePath: opts.authStore as string | undefined,
+        integrationStatePath: opts.integrationState as string | undefined
+      });
       await setAccountOrderByAlias({
         aliases: (aliases as string[]).map(String),
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
+        routerStatePath,
+        authStorePath
       });
       console.log(`updated order: ${(aliases as string[]).join(", ")}`);
     });
@@ -119,11 +148,17 @@ export function registerAccountsCommands(
     .argument("<alias>", "Account alias")
     .option("--router-state <path>", "Router state path")
     .option("--auth-store <path>", "OpenClaw auth store path")
+    .option("--integration-state <path>", "Integration state path")
     .action(async (alias, opts) => {
+      const { routerStatePath, authStorePath } = await resolveInstalledStatePaths({
+        routerStatePath: opts.routerState as string | undefined,
+        authStorePath: opts.authStore as string | undefined,
+        integrationStatePath: opts.integrationState as string | undefined
+      });
       await clearAccountCooldown({
         alias: String(alias),
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
+        routerStatePath,
+        authStorePath
       });
       console.log(`cleared cooldown for ${alias}`);
     });

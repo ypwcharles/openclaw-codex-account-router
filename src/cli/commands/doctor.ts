@@ -4,11 +4,7 @@ import { execa } from "execa";
 import { Command } from "commander";
 import { loadRouterState } from "../../account_store/store.js";
 import { loadIntegrationState } from "../../integration/store.js";
-import {
-  resolveAuthStorePath,
-  resolveOptionalIntegrationStatePath,
-  resolveRouterStatePath
-} from "../../shared/paths.js";
+import { resolveInstalledStatePaths } from "../../shared/paths.js";
 
 type DoctorCheck = {
   id: string;
@@ -46,12 +42,15 @@ export function registerDoctorCommand(program: Command): void {
     .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
+      const { routerStatePath, authStorePath, integrationStatePath } = await resolveInstalledStatePaths({
+        routerStatePath: opts.routerState as string | undefined,
+        authStorePath: opts.authStore as string | undefined,
+        integrationStatePath: opts.integrationState as string | undefined
+      });
       const result = await runDoctor({
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined),
-        integrationStatePath: resolveOptionalIntegrationStatePath(
-          opts.integrationState as string | undefined
-        )
+        routerStatePath,
+        authStorePath,
+        integrationStatePath
       });
       if (opts.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -68,14 +67,14 @@ export function registerDoctorCommand(program: Command): void {
 
 async function checkOpenClawBinary(): Promise<DoctorCheck> {
   try {
-    const result = await execa("openclaw", ["--help"], {
+    const result = await execa("openclaw", ["--version"], {
       reject: false,
-      timeout: 1000,
+      timeout: 1500,
       stdout: "ignore",
       stderr: "ignore"
     });
     if ((result as { timedOut?: boolean }).timedOut) {
-      return { id: "openclaw_binary", ok: false, detail: "openclaw --help timed out" };
+      return { id: "openclaw_binary", ok: false, detail: "openclaw --version timed out" };
     }
     if (result.exitCode === 0) {
       return { id: "openclaw_binary", ok: true, detail: "openclaw is available" };
@@ -83,11 +82,11 @@ async function checkOpenClawBinary(): Promise<DoctorCheck> {
     return {
       id: "openclaw_binary",
       ok: false,
-      detail: `openclaw --help exited with status ${result.exitCode ?? "unknown"}`
+      detail: `openclaw --version exited with status ${result.exitCode ?? "unknown"}`
     };
   } catch (error) {
     if (isTimedOutError(error)) {
-      return { id: "openclaw_binary", ok: false, detail: "openclaw --help timed out" };
+      return { id: "openclaw_binary", ok: false, detail: "openclaw --version timed out" };
     }
     return { id: "openclaw_binary", ok: false, detail: "openclaw binary not found in PATH" };
   }

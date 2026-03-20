@@ -1,6 +1,7 @@
 import path from "node:path";
 import { detectIntegrationPlatform, resolveHomeDir } from "../integration/discovery.js";
 import { resolveIntegrationPaths } from "../integration/paths.js";
+import { loadIntegrationState } from "../integration/store.js";
 import { resolveDefaultOpenClawAuthStorePath } from "../router/openclaw_paths.js";
 
 export function resolveRouterStatePath(explicit?: string): string {
@@ -42,4 +43,27 @@ export function resolveOptionalIntegrationStatePath(explicit?: string): string |
   } catch {
     return undefined;
   }
+}
+
+export async function resolveInstalledStatePaths(params: {
+  routerStatePath?: string;
+  authStorePath?: string;
+  integrationStatePath?: string;
+}): Promise<{
+  integrationStatePath?: string;
+  routerStatePath: string;
+  authStorePath: string;
+}> {
+  const integrationStatePath = resolveOptionalIntegrationStatePath(params.integrationStatePath);
+  const integrationState = integrationStatePath
+    ? await loadIntegrationState(integrationStatePath)
+    : undefined;
+
+  return {
+    integrationStatePath,
+    routerStatePath: resolveRouterStatePath(
+      params.routerStatePath ?? integrationState?.routerStatePath
+    ),
+    authStorePath: resolveAuthStorePath(params.authStorePath ?? integrationState?.authStorePath)
+  };
 }

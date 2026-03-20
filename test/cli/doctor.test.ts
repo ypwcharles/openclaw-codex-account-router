@@ -175,6 +175,93 @@ describe("doctor command", () => {
     15000
   );
 
+  it("uses router and auth store paths from integration state when options are omitted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-intg-path-fallback-"));
+    cleanupPaths.push(dir);
+
+    const homeDir = path.join(dir, "home");
+    const routerStatePath = path.join(homeDir, ".openclaw-router", "router-state.json");
+    const authStorePath = path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
+    const integrationStatePath = path.join(homeDir, ".openclaw-router", "integration.json");
+    await mkdir(path.dirname(routerStatePath), { recursive: true });
+    await mkdir(path.dirname(authStorePath), { recursive: true });
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:a@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              provider: "openai-codex",
+              access: "token"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      integrationStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          platform: "linux",
+          installRoot: path.join(homeDir, ".openclaw-router"),
+          shimPath: path.join(homeDir, ".openclaw-router", "bin", "openclaw"),
+          realOpenClawPath: "/usr/bin/openclaw",
+          servicePath: path.join(homeDir, ".openclaw-router", "services", "openclaw-router-repair.service"),
+          lastSetupAt: "2026-03-19T10:00:00.000Z",
+          routerStatePath,
+          authStorePath,
+          authStoreBackupPath: path.join(homeDir, ".openclaw-router", "backups", "auth-profiles.pre-router.json")
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const { stdout } = await execa(
+      "node",
+      ["--import", "tsx", "src/cli/main.ts", "doctor", "--json"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: homeDir
+        }
+      }
+    );
+
+    const payload = JSON.parse(stdout) as {
+      checks: Array<{ id: string; ok: boolean }>;
+    };
+    expect(payload.checks.find((check) => check.id === "alias_profile_mapping")?.ok).toBe(true);
+  });
+
   it("marks openclaw_binary unhealthy when openclaw exits with non-zero status", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "doctor-openclaw-exit-"));
     cleanupPaths.push(dir);
@@ -260,7 +347,7 @@ describe("doctor command", () => {
   });
 
   it(
-    "fails fast when openclaw help command hangs",
+    "fails fast when openclaw version command hangs",
     async () => {
       const dir = await mkdtemp(path.join(tmpdir(), "doctor-openclaw-timeout-"));
       cleanupPaths.push(dir);
@@ -290,6 +377,7 @@ describe("doctor command", () => {
 
         expect(openclawBinary?.ok).toBe(false);
         expect(openclawBinary?.detail).toContain("timed out");
+        expect(openclawBinary?.detail).toContain("--version");
         expect(elapsedMs).toBeLessThan(2500);
       } finally {
         process.env.PATH = originalPath;

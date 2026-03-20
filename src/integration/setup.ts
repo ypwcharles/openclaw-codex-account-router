@@ -59,12 +59,13 @@ export async function runSetup(
   const resolveBinary = deps?.resolveOpenClawBinary ?? resolveOpenClawBinaryPath;
   const now = deps?.now ?? (() => new Date());
 
+  const realOpenClawPath = await resolveBinary({ excludePaths: [paths.binDir] });
+
   const authStoreBackupPath = await ensureAuthStoreBackup(authStorePath, paths.installRoot);
   const migratedProfileIds = await normalizeCodexAuthProfiles(authStorePath);
   await rewriteRouterStateProfileIds(routerStatePath, migratedProfileIds);
 
   const discoveredProfiles = await discover(authStorePath);
-  const realOpenClawPath = await resolveBinary();
 
   const routerEntryPath =
     params.routerEntryPath ??
