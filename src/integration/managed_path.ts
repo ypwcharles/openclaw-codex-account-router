@@ -61,10 +61,6 @@ export function resolveShellProfileCandidates(
       {
         path: path.join(homeDir, ".zshrc"),
         syntax: "posix"
-      },
-      {
-        path: path.join(homeDir, ".profile"),
-        syntax: "posix"
       }
     ]);
   }

@@ -12,6 +12,7 @@ import {
   resolveOptionalIntegrationStatePath,
   resolveRouterStatePath
 } from "../../shared/paths.js";
+import type { IntegrationState } from "../../integration/types.js";
 
 type DoctorCheck = {
   id: string;
@@ -25,13 +26,16 @@ export async function runDoctor(params: {
   integrationStatePath?: string;
 }): Promise<{ ok: boolean; checks: DoctorCheck[] }> {
   const checks: DoctorCheck[] = [];
+  const integration = params.integrationStatePath
+    ? await loadIntegrationState(params.integrationStatePath)
+    : undefined;
 
-  checks.push(await checkOpenClawBinary());
+  checks.push(await checkOpenClawBinary(integration));
   checks.push(await checkAuthStoreAccess(params.authStorePath));
   checks.push(...(await checkAliasMappings(params.routerStatePath, params.authStorePath)));
 
   if (params.integrationStatePath) {
-    checks.push(...(await checkIntegrationHealth(params.integrationStatePath)));
+    checks.push(...(await checkIntegrationHealth(params.integrationStatePath, integration)));
   }
 
   return {
@@ -69,10 +73,25 @@ export function registerDoctorCommand(program: Command): void {
     });
 }
 
-async function checkOpenClawBinary(): Promise<DoctorCheck> {
+async function checkOpenClawBinary(integration?: IntegrationState): Promise<DoctorCheck> {
   const resolvedPath = await resolveExecutableOnPath("openclaw", process.env.PATH ?? "");
   if (!resolvedPath) {
     return { id: "openclaw_binary", ok: false, detail: "openclaw binary not found in PATH" };
+  }
+  if (integration && resolvedPath === integration.shimPath) {
+    const realBinaryOk = await checkPathExecutable(integration.realOpenClawPath);
+    if (!realBinaryOk) {
+      return {
+        id: "openclaw_binary",
+        ok: false,
+        detail: `managed shim points to missing real openclaw: ${integration.realOpenClawPath}`
+      };
+    }
+    return {
+      id: "openclaw_binary",
+      ok: true,
+      detail: `${resolvedPath} -> ${integration.realOpenClawPath}`
+    };
   }
   return { id: "openclaw_binary", ok: true, detail: resolvedPath };
 }
@@ -134,9 +153,11 @@ async function checkAliasMappings(
   return checks;
 }
 
-async function checkIntegrationHealth(integrationStatePath: string): Promise<DoctorCheck[]> {
+async function checkIntegrationHealth(
+  integrationStatePath: string,
+  integration: IntegrationState | undefined
+): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
-  const integration = await loadIntegrationState(integrationStatePath);
   if (!integration) {
     checks.push({
       id: "integration_state_readable",
@@ -189,6 +210,15 @@ async function checkIntegrationHealth(integrationStatePath: string): Promise<Doc
 async function checkPathReadable(targetPath: string): Promise<boolean> {
   try {
     await access(targetPath, constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function checkPathExecutable(targetPath: string): Promise<boolean> {
+  try {
+    await access(targetPath, constants.X_OK);
     return true;
   } catch {
     return false;
