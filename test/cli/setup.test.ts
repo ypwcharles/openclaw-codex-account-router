@@ -9,6 +9,16 @@ import { runSetup } from "../../src/integration/setup.js";
 const cleanupPaths: string[] = [];
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
+function buildAccessTokenWithEmail(email: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({
+      "https://api.openai.com/profile": { email }
+    })
+  ).toString("base64url");
+  return `${header}.${payload}.signature`;
+}
+
 afterEach(async () => {
   const { rm } = await import("node:fs/promises");
   await Promise.all(cleanupPaths.splice(0).map((p) => rm(p, { recursive: true, force: true })));
@@ -251,5 +261,109 @@ describe("setup flow", () => {
     const launcherText = await readFile(launcherPath, "utf8");
     expect(launcherText).toContain(distEntry);
     expect(launcherText).not.toContain("--import tsx");
+  });
+
+  it("migrates default codex oauth profiles to email-based ids during setup", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "setup-migrate-default-"));
+    cleanupPaths.push(homeDir);
+
+    const routerStatePath = path.join(homeDir, ".openclaw-router", "router-state.json");
+    const authStorePath = path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
+    await mkdir(path.dirname(authStorePath), { recursive: true });
+
+    const originalAuthStoreRaw = JSON.stringify(
+      {
+        version: 1,
+        profiles: {
+          "openai-codex:default": {
+            provider: "openai-codex",
+            access: buildAccessTokenWithEmail("decoded@example.com"),
+            refresh: "refresh-default"
+          }
+        },
+        order: {
+          "openai-codex": ["openai-codex:default"]
+        },
+        lastGood: {
+          "openai-codex": "openai-codex:default"
+        },
+        usageStats: {
+          "openai-codex:default": {
+            cooldownUntil: 9_999_999_999_999
+          }
+        }
+      },
+      null,
+      2
+    );
+    await writeFile(authStorePath, originalAuthStoreRaw, "utf8");
+    await mkdir(path.dirname(routerStatePath), { recursive: true });
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:default",
+              provider: "openai-codex",
+              priority: 10,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const result = await runSetup(
+      {
+        homeDir,
+        platform: "linux",
+        authStorePath,
+        routerStatePath
+      },
+      {
+        resolveOpenClawBinary: async () => "/usr/bin/openclaw"
+      }
+    );
+
+    expect(result.discoveredProfiles).toEqual(["openai-codex:decoded@example.com"]);
+
+    const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      profiles: Record<string, unknown>;
+      order?: Record<string, string[]>;
+      lastGood?: Record<string, string>;
+      usageStats?: Record<string, unknown>;
+    };
+    expect(authStore.profiles["openai-codex:decoded@example.com"]).toBeDefined();
+    expect(authStore.profiles["openai-codex:default"]).toBeUndefined();
+    expect(authStore.order?.["openai-codex"]).toEqual(["openai-codex:decoded@example.com"]);
+    expect(authStore.lastGood?.["openai-codex"]).toBe("openai-codex:decoded@example.com");
+    expect(authStore.usageStats?.["openai-codex:decoded@example.com"]).toBeDefined();
+    expect(authStore.usageStats?.["openai-codex:default"]).toBeUndefined();
+
+    const routerState = JSON.parse(await readFile(routerStatePath, "utf8")) as {
+      accounts: Array<{ alias: string; profileId: string }>;
+    };
+    expect(routerState.accounts).toHaveLength(1);
+    expect(routerState.accounts[0]).toMatchObject({
+      alias: "acct-a",
+      profileId: "openai-codex:decoded@example.com"
+    });
+
+    const integrationStateRaw = await readFile(result.integrationStatePath, "utf8");
+    const integrationState = JSON.parse(integrationStateRaw) as { authStoreBackupPath?: string };
+    expect(integrationState.authStoreBackupPath).toBeDefined();
+    if (!integrationState.authStoreBackupPath) {
+      throw new Error("authStoreBackupPath is required");
+    }
+    const backupRaw = await readFile(integrationState.authStoreBackupPath, "utf8");
+    expect(JSON.parse(backupRaw)).toEqual(JSON.parse(originalAuthStoreRaw));
   });
 });

@@ -44,7 +44,8 @@ Read these before changing behavior:
   - `src/integration/service_templates.ts`
 - CLI contract
   - `src/cli/main.ts`
-  - `src/cli/commands/setup.ts`
+- `src/cli/commands/setup.ts`
+  - `src/cli/commands/auth.ts`
   - `src/cli/commands/account.ts`
   - `src/cli/commands/status.ts`
   - `src/cli/commands/doctor.ts`
@@ -69,6 +70,7 @@ Do not break these:
 Primary user-facing CLI:
 
 - `setup [--home-dir <path>] [--platform <darwin|linux>] [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json]`
+- `auth login [--auth-store <path>] [--json]`
 - `status [--router-state <path>] [--integration-state <path>] [--json]`
 - `doctor [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json]`
 - `run [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json] [commandArgs...]`

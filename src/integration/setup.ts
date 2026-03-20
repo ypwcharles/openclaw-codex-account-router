@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { bindAccount, listAccounts } from "../account_store/bind.js";
 import { loadRouterState, saveRouterState } from "../account_store/store.js";
+import { normalizeCodexAuthProfiles } from "./auth_profiles.js";
 import {
   detectIntegrationPlatform,
   discoverOpenClawProfiles,
@@ -58,9 +59,12 @@ export async function runSetup(
   const resolveBinary = deps?.resolveOpenClawBinary ?? resolveOpenClawBinaryPath;
   const now = deps?.now ?? (() => new Date());
 
+  const authStoreBackupPath = await ensureAuthStoreBackup(authStorePath, paths.installRoot);
+  const migratedProfileIds = await normalizeCodexAuthProfiles(authStorePath);
+  await rewriteRouterStateProfileIds(routerStatePath, migratedProfileIds);
+
   const discoveredProfiles = await discover(authStorePath);
   const realOpenClawPath = await resolveBinary();
-  const authStoreBackupPath = await ensureAuthStoreBackup(authStorePath, paths.installRoot);
 
   const routerEntryPath =
     params.routerEntryPath ??
@@ -239,6 +243,40 @@ function resolveTsxLoaderImport(): string {
   } catch {
     return "tsx";
   }
+}
+
+async function rewriteRouterStateProfileIds(
+  routerStatePath: string,
+  migratedProfileIds: Record<string, string>
+): Promise<void> {
+  const entries = Object.entries(migratedProfileIds);
+  if (entries.length === 0) {
+    return;
+  }
+
+  const state = await loadRouterState(routerStatePath);
+  let changed = false;
+  const nextAccounts = state.accounts.map((account) => {
+    const nextProfileId = migratedProfileIds[account.profileId];
+    if (!nextProfileId) {
+      return account;
+    }
+    changed = true;
+    return {
+      ...account,
+      profileId: nextProfileId,
+      defaultProfileFingerprint: undefined
+    };
+  });
+
+  if (!changed) {
+    return;
+  }
+
+  await saveRouterState(routerStatePath, {
+    ...state,
+    accounts: nextAccounts
+  });
 }
 
 async function ensureAuthStoreBackup(authStorePath: string, installRoot: string): Promise<string> {

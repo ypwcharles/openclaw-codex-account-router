@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { registerAccountCommand } from "./commands/account.js";
 import { registerAccountsCommands } from "./commands/accounts.js";
+import { registerAuthCommand } from "./commands/auth.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerRepairCommand } from "./commands/repair.js";
 import { registerRestoreCommand } from "./commands/restore.js";
@@ -17,6 +18,7 @@ registerRunCommand(program);
 registerDoctorCommand(program);
 registerRepairCommand(program);
 registerRestoreCommand(program);
+registerAuthCommand(program);
 registerAccountCommand(program);
 registerAccountsCommands(program, { hidden: true });
 
