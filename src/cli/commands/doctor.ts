@@ -1,8 +1,11 @@
 import { access, constants, readFile } from "node:fs/promises";
 import path from "node:path";
-import { execa } from "execa";
 import { Command } from "commander";
 import { loadRouterState } from "../../account_store/store.js";
+import {
+  hasManagedPathBlock,
+  resolveShellProfileCandidates
+} from "../../integration/managed_path.js";
 import { loadIntegrationState } from "../../integration/store.js";
 import {
   resolveAuthStorePath,
@@ -67,39 +70,11 @@ export function registerDoctorCommand(program: Command): void {
 }
 
 async function checkOpenClawBinary(): Promise<DoctorCheck> {
-  try {
-    const result = await execa("openclaw", ["--help"], {
-      reject: false,
-      timeout: 1000,
-      stdout: "ignore",
-      stderr: "ignore"
-    });
-    if ((result as { timedOut?: boolean }).timedOut) {
-      return { id: "openclaw_binary", ok: false, detail: "openclaw --help timed out" };
-    }
-    if (result.exitCode === 0) {
-      return { id: "openclaw_binary", ok: true, detail: "openclaw is available" };
-    }
-    return {
-      id: "openclaw_binary",
-      ok: false,
-      detail: `openclaw --help exited with status ${result.exitCode ?? "unknown"}`
-    };
-  } catch (error) {
-    if (isTimedOutError(error)) {
-      return { id: "openclaw_binary", ok: false, detail: "openclaw --help timed out" };
-    }
+  const resolvedPath = await resolveExecutableOnPath("openclaw", process.env.PATH ?? "");
+  if (!resolvedPath) {
     return { id: "openclaw_binary", ok: false, detail: "openclaw binary not found in PATH" };
   }
-}
-
-function isTimedOutError(error: unknown): boolean {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "timedOut" in error &&
-      (error as { timedOut?: unknown }).timedOut === true
-  );
+  return { id: "openclaw_binary", ok: true, detail: resolvedPath };
 }
 
 async function checkAuthStoreAccess(authStorePath: string): Promise<DoctorCheck> {
@@ -201,7 +176,11 @@ async function checkIntegrationHealth(integrationStatePath: string): Promise<Doc
     detail: serviceOk ? integration.servicePath : `missing service: ${integration.servicePath}`
   });
 
-  const pathAdvice = checkPathOrder(integration.shimPath, integration.realOpenClawPath, process.env.PATH ?? "");
+  const pathAdvice = await checkPathOrder(
+    integration.shimPath,
+    integration.realOpenClawPath,
+    process.env.PATH ?? ""
+  );
   checks.push(pathAdvice);
 
   return checks;
@@ -216,19 +195,73 @@ async function checkPathReadable(targetPath: string): Promise<boolean> {
   }
 }
 
-function checkPathOrder(shimPath: string, realOpenClawPath: string, pathEnv: string): DoctorCheck {
-  const pathParts = pathEnv.split(path.delimiter).filter(Boolean);
-  const shimDir = path.dirname(shimPath);
-  const realDir = path.dirname(realOpenClawPath);
-  const shimIndex = pathParts.indexOf(shimDir);
-  const realIndex = pathParts.indexOf(realDir);
+async function checkPathOrder(
+  shimPath: string,
+  realOpenClawPath: string,
+  pathEnv: string
+): Promise<DoctorCheck> {
+  const activeOpenClawPath = await resolveExecutableOnPath("openclaw", pathEnv);
+  if (activeOpenClawPath === shimPath) {
+    return {
+      id: "integration_path_precedence",
+      ok: true,
+      detail: `${shimPath} is active in current PATH`
+    };
+  }
 
-  const ok = shimIndex >= 0 && (realIndex < 0 || shimIndex < realIndex);
+  const configuredProfiles = await resolveConfiguredProfiles(path.dirname(shimPath));
+  if (configuredProfiles.length > 0) {
+    return {
+      id: "integration_path_precedence",
+      ok: true,
+      detail: `${configuredProfiles.join(", ")} configure the managed PATH; open a new shell to activate`
+    };
+  }
+
+  const realDir = path.dirname(realOpenClawPath);
   return {
     id: "integration_path_precedence",
-    ok,
-    detail: ok
-      ? `${shimDir} is ahead of ${realDir} in PATH`
-      : `add ${shimDir} before ${realDir} in PATH`
+    ok: false,
+    detail: activeOpenClawPath
+      ? `current PATH resolves openclaw to ${activeOpenClawPath}; add ${path.dirname(shimPath)} before ${realDir}`
+      : `add ${path.dirname(shimPath)} before ${realDir} in PATH`
   };
+}
+
+async function resolveConfiguredProfiles(shimDir: string): Promise<string[]> {
+  const homeDir = process.env.HOME?.trim();
+  if (!homeDir) {
+    return [];
+  }
+
+  const profiles = resolveShellProfileCandidates(process.env.SHELL, homeDir);
+  const configuredProfiles: string[] = [];
+  for (const profile of profiles) {
+    try {
+      const profileText = await readFile(profile.path, "utf8");
+      if (hasManagedPathBlock(profileText, profile.syntax, shimDir)) {
+        configuredProfiles.push(profile.path);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return configuredProfiles;
+}
+
+async function resolveExecutableOnPath(
+  commandName: string,
+  pathEnv: string
+): Promise<string | undefined> {
+  const pathParts = pathEnv.split(path.delimiter).filter(Boolean);
+  for (const pathPart of pathParts) {
+    const candidate = path.join(pathPart, commandName);
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }

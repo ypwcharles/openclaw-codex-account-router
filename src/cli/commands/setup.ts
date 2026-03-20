@@ -4,9 +4,11 @@ import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { runSetup } from "../../integration/setup.js";
 import { detectIntegrationPlatform, resolveHomeDir } from "../../integration/discovery.js";
-
-const PATH_BLOCK_BEGIN = "# >>> openclaw-router managed path >>>";
-const PATH_BLOCK_END = "# <<< openclaw-router managed path <<<";
+import {
+  renderPathBlock,
+  resolveShellProfile,
+  upsertManagedPathBlock
+} from "../../integration/managed_path.js";
 
 export function registerSetupCommand(program: Command): void {
   program
@@ -125,61 +127,6 @@ function resolveActiveOpenClawPath(): Promise<string | undefined> {
       return resolved || undefined;
     })
     .catch(() => undefined);
-}
-
-function resolveShellProfile(
-  shellPath: string | undefined,
-  homeDir: string
-): { path: string; syntax: "posix" | "fish" } {
-  const shellName = path.basename(shellPath ?? "").toLowerCase();
-  if (shellName === "fish") {
-    return {
-      path: path.join(homeDir, ".config", "fish", "config.fish"),
-      syntax: "fish"
-    };
-  }
-  if (shellName === "zsh") {
-    return {
-      path: path.join(homeDir, ".zprofile"),
-      syntax: "posix"
-    };
-  }
-  if (shellName === "bash") {
-    return {
-      path: path.join(homeDir, ".bashrc"),
-      syntax: "posix"
-    };
-  }
-  return {
-    path: path.join(homeDir, ".profile"),
-    syntax: "posix"
-  };
-}
-
-function renderPathBlock(syntax: "posix" | "fish", managedBinDir: string): string | undefined {
-  if (syntax === "posix") {
-    return `${PATH_BLOCK_BEGIN}\nexport PATH="${managedBinDir}:$PATH"\n${PATH_BLOCK_END}`;
-  }
-  if (syntax === "fish") {
-    return `${PATH_BLOCK_BEGIN}\nset -gx PATH "${managedBinDir}" $PATH\n${PATH_BLOCK_END}`;
-  }
-  return undefined;
-}
-
-function upsertManagedPathBlock(existing: string, block: string): string {
-  const blockRegex = new RegExp(
-    `${escapeRegex(PATH_BLOCK_BEGIN)}[\\s\\S]*?${escapeRegex(PATH_BLOCK_END)}\\n?`,
-    "u"
-  );
-  if (blockRegex.test(existing)) {
-    return existing.replace(blockRegex, `${block}\n`);
-  }
-  const prefix = existing.endsWith("\n") || existing.length === 0 ? existing : `${existing}\n`;
-  return `${prefix}${block}\n`;
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function buildSetupGuidance(params: {

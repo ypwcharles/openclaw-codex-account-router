@@ -175,7 +175,7 @@ describe("doctor command", () => {
     15000
   );
 
-  it("marks openclaw_binary unhealthy when openclaw exits with non-zero status", async () => {
+  it("marks openclaw_binary healthy when openclaw is executable even if help is slow", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "doctor-openclaw-exit-"));
     cleanupPaths.push(dir);
 
@@ -186,7 +186,7 @@ describe("doctor command", () => {
     const integrationStatePath = path.join(dir, "integration.json");
 
     await mkdir(fakeBinDir, { recursive: true });
-    await writeFile(fakeOpenClawPath, "#!/usr/bin/env bash\nexit 1\n", "utf8");
+    await writeFile(fakeOpenClawPath, "#!/usr/bin/env bash\nsleep 10\n", "utf8");
     await chmod(fakeOpenClawPath, 0o755);
 
     await writeFile(routerStatePath, JSON.stringify({ version: 1, accounts: [] }, null, 2), "utf8");
@@ -218,9 +218,170 @@ describe("doctor command", () => {
         integrationStatePath
       });
       const openclawBinary = result.checks.find((check) => check.id === "openclaw_binary");
-      expect(openclawBinary?.ok).toBe(false);
+      expect(openclawBinary?.ok).toBe(true);
+      expect(openclawBinary?.detail).toContain(fakeOpenClawPath);
     } finally {
       process.env.PATH = originalPath;
+    }
+  });
+
+  it("does not fail PATH precedence when shell profile is updated but current shell is stale", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-path-profile-"));
+    cleanupPaths.push(dir);
+
+    const homeDir = path.join(dir, "home");
+    const fakeBinDir = path.join(dir, "bin");
+    const fakeOpenClawPath = path.join(fakeBinDir, "openclaw");
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+    const integrationStatePath = path.join(dir, "integration.json");
+    const shimPath = path.join(homeDir, ".openclaw-router", "bin", "openclaw");
+    const servicePath = path.join(dir, "services", "openclaw-router-repair.service");
+    const shellProfilePath = path.join(homeDir, ".profile");
+    const managedBinDir = path.dirname(shimPath);
+
+    await mkdir(fakeBinDir, { recursive: true });
+    await writeFile(fakeOpenClawPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    await chmod(fakeOpenClawPath, 0o755);
+
+    await mkdir(path.dirname(shellProfilePath), { recursive: true });
+    await writeFile(
+      shellProfilePath,
+      [
+        "# >>> openclaw-router managed path >>>",
+        `export PATH=\"${managedBinDir}:$PATH\"`,
+        "# <<< openclaw-router managed path <<<",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    await mkdir(path.dirname(shimPath), { recursive: true });
+    await writeFile(shimPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    await mkdir(path.dirname(servicePath), { recursive: true });
+    await writeFile(servicePath, "[Unit]\nDescription=test\n", "utf8");
+
+    await writeFile(routerStatePath, JSON.stringify({ version: 1, accounts: [] }, null, 2), "utf8");
+    await writeFile(authStorePath, JSON.stringify({ version: 1, profiles: {} }, null, 2), "utf8");
+    await writeFile(
+      integrationStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          platform: "linux",
+          installRoot: path.join(homeDir, ".openclaw-router"),
+          shimPath,
+          realOpenClawPath: fakeOpenClawPath,
+          servicePath,
+          lastSetupAt: "2026-03-19T10:00:00.000Z"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const originalPath = process.env.PATH;
+    const originalHome = process.env.HOME;
+    const originalShell = process.env.SHELL;
+    process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath ?? ""}`;
+    process.env.HOME = homeDir;
+    process.env.SHELL = "";
+
+    try {
+      const result = await runDoctor({
+        routerStatePath,
+        authStorePath,
+        integrationStatePath
+      });
+      const pathCheck = result.checks.find((check) => check.id === "integration_path_precedence");
+
+      expect(pathCheck?.ok).toBe(true);
+      expect(pathCheck?.detail).toContain("open a new shell");
+    } finally {
+      process.env.PATH = originalPath;
+      process.env.HOME = originalHome;
+      process.env.SHELL = originalShell;
+    }
+  });
+
+  it("does not fail PATH precedence when zsh PATH config lives in .zshrc", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-path-zshrc-"));
+    cleanupPaths.push(dir);
+
+    const homeDir = path.join(dir, "home");
+    const fakeBinDir = path.join(dir, "bin");
+    const fakeOpenClawPath = path.join(fakeBinDir, "openclaw");
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+    const integrationStatePath = path.join(dir, "integration.json");
+    const shimPath = path.join(homeDir, ".openclaw-router", "bin", "openclaw");
+    const servicePath = path.join(dir, "services", "openclaw-router-repair.service");
+    const shellProfilePath = path.join(homeDir, ".zshrc");
+    const managedBinDir = path.dirname(shimPath);
+
+    await mkdir(fakeBinDir, { recursive: true });
+    await writeFile(fakeOpenClawPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    await chmod(fakeOpenClawPath, 0o755);
+
+    await mkdir(path.dirname(shellProfilePath), { recursive: true });
+    await writeFile(
+      shellProfilePath,
+      [
+        "# >>> openclaw-router managed path >>>",
+        `export PATH=\"${managedBinDir}:$PATH\"`,
+        "# <<< openclaw-router managed path <<<",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    await mkdir(path.dirname(shimPath), { recursive: true });
+    await writeFile(shimPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    await mkdir(path.dirname(servicePath), { recursive: true });
+    await writeFile(servicePath, "[Unit]\nDescription=test\n", "utf8");
+
+    await writeFile(routerStatePath, JSON.stringify({ version: 1, accounts: [] }, null, 2), "utf8");
+    await writeFile(authStorePath, JSON.stringify({ version: 1, profiles: {} }, null, 2), "utf8");
+    await writeFile(
+      integrationStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          platform: "linux",
+          installRoot: path.join(homeDir, ".openclaw-router"),
+          shimPath,
+          realOpenClawPath: fakeOpenClawPath,
+          servicePath,
+          lastSetupAt: "2026-03-19T10:00:00.000Z"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const originalPath = process.env.PATH;
+    const originalHome = process.env.HOME;
+    const originalShell = process.env.SHELL;
+    process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath ?? ""}`;
+    process.env.HOME = homeDir;
+    process.env.SHELL = "/bin/zsh";
+
+    try {
+      const result = await runDoctor({
+        routerStatePath,
+        authStorePath,
+        integrationStatePath
+      });
+      const pathCheck = result.checks.find((check) => check.id === "integration_path_precedence");
+
+      expect(pathCheck?.ok).toBe(true);
+      expect(pathCheck?.detail).toContain(shellProfilePath);
+    } finally {
+      process.env.PATH = originalPath;
+      process.env.HOME = originalHome;
+      process.env.SHELL = originalShell;
     }
   });
 
@@ -259,42 +420,35 @@ describe("doctor command", () => {
     expect(payload.checks.some((check) => check.id === "openclaw_binary")).toBe(true);
   });
 
-  it(
-    "fails fast when openclaw help command hangs",
-    async () => {
-      const dir = await mkdtemp(path.join(tmpdir(), "doctor-openclaw-timeout-"));
-      cleanupPaths.push(dir);
+  it("marks openclaw_binary unhealthy when PATH entry is not executable", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-openclaw-not-executable-"));
+    cleanupPaths.push(dir);
 
-      const fakeBinDir = path.join(dir, "bin");
-      const fakeOpenClawPath = path.join(fakeBinDir, "openclaw");
-      const routerStatePath = path.join(dir, "router-state.json");
-      const authStorePath = path.join(dir, "auth-profiles.json");
+    const fakeBinDir = path.join(dir, "bin");
+    const fakeOpenClawPath = path.join(fakeBinDir, "openclaw");
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
 
-      await mkdir(fakeBinDir, { recursive: true });
-      await writeFile(fakeOpenClawPath, "#!/usr/bin/env bash\nsleep 10\n", "utf8");
-      await chmod(fakeOpenClawPath, 0o755);
+    await mkdir(fakeBinDir, { recursive: true });
+    await writeFile(fakeOpenClawPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    await chmod(fakeOpenClawPath, 0o644);
 
-      await writeFile(routerStatePath, JSON.stringify({ version: 1, accounts: [] }, null, 2), "utf8");
-      await writeFile(authStorePath, JSON.stringify({ version: 1, profiles: {} }, null, 2), "utf8");
+    await writeFile(routerStatePath, JSON.stringify({ version: 1, accounts: [] }, null, 2), "utf8");
+    await writeFile(authStorePath, JSON.stringify({ version: 1, profiles: {} }, null, 2), "utf8");
 
-      const originalPath = process.env.PATH;
-      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath ?? ""}`;
-      try {
-        const start = Date.now();
-        const result = await runDoctor({
-          routerStatePath,
-          authStorePath
-        });
-        const elapsedMs = Date.now() - start;
-        const openclawBinary = result.checks.find((check) => check.id === "openclaw_binary");
+    const originalPath = process.env.PATH;
+    process.env.PATH = fakeBinDir;
+    try {
+      const result = await runDoctor({
+        routerStatePath,
+        authStorePath
+      });
+      const openclawBinary = result.checks.find((check) => check.id === "openclaw_binary");
 
-        expect(openclawBinary?.ok).toBe(false);
-        expect(openclawBinary?.detail).toContain("timed out");
-        expect(elapsedMs).toBeLessThan(2500);
-      } finally {
-        process.env.PATH = originalPath;
-      }
-    },
-    15000
-  );
+      expect(openclawBinary?.ok).toBe(false);
+      expect(openclawBinary?.detail).toContain("not found");
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
 });
