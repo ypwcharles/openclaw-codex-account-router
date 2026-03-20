@@ -258,4 +258,43 @@ describe("doctor command", () => {
     const payload = JSON.parse(stdout) as { checks: Array<{ id: string }> };
     expect(payload.checks.some((check) => check.id === "openclaw_binary")).toBe(true);
   });
+
+  it(
+    "fails fast when openclaw help command hangs",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "doctor-openclaw-timeout-"));
+      cleanupPaths.push(dir);
+
+      const fakeBinDir = path.join(dir, "bin");
+      const fakeOpenClawPath = path.join(fakeBinDir, "openclaw");
+      const routerStatePath = path.join(dir, "router-state.json");
+      const authStorePath = path.join(dir, "auth-profiles.json");
+
+      await mkdir(fakeBinDir, { recursive: true });
+      await writeFile(fakeOpenClawPath, "#!/usr/bin/env bash\nsleep 10\n", "utf8");
+      await chmod(fakeOpenClawPath, 0o755);
+
+      await writeFile(routerStatePath, JSON.stringify({ version: 1, accounts: [] }, null, 2), "utf8");
+      await writeFile(authStorePath, JSON.stringify({ version: 1, profiles: {} }, null, 2), "utf8");
+
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath ?? ""}`;
+      try {
+        const start = Date.now();
+        const result = await runDoctor({
+          routerStatePath,
+          authStorePath
+        });
+        const elapsedMs = Date.now() - start;
+        const openclawBinary = result.checks.find((check) => check.id === "openclaw_binary");
+
+        expect(openclawBinary?.ok).toBe(false);
+        expect(openclawBinary?.detail).toContain("timed out");
+        expect(elapsedMs).toBeLessThan(2500);
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    },
+    15000
+  );
 });

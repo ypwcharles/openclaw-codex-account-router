@@ -102,9 +102,14 @@ export function registerStatusCommand(program: Command): void {
       const integrationStatePath = resolveOptionalIntegrationStatePath(
         opts.integrationState as string | undefined
       );
+      const integrationState = integrationStatePath
+        ? await loadIntegrationState(integrationStatePath)
+        : undefined;
 
       const payload = await getRouterStatus({
-        routerStatePath: resolveRouterStatePath(opts.routerState as string | undefined),
+        routerStatePath: resolveRouterStatePath(
+          (opts.routerState as string | undefined) ?? integrationState?.routerStatePath
+        ),
         integrationStatePath
       });
       if (opts.json) {

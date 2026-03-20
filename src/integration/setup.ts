@@ -1,7 +1,8 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { bindAccount, listAccounts } from "../account_store/bind.js";
 import { loadRouterState, saveRouterState } from "../account_store/store.js";
 import {
@@ -15,6 +16,8 @@ import { renderServiceDefinition } from "./service_templates.js";
 import { installOpenClawShim } from "./shim.js";
 import { saveIntegrationState } from "./store.js";
 import type { IntegrationPlatform } from "./types.js";
+
+const require = createRequire(import.meta.url);
 
 export type SetupResult = {
   installed: true;
@@ -62,7 +65,7 @@ export async function runSetup(
   const routerEntryPath =
     params.routerEntryPath ??
     (params.projectRoot
-      ? path.join(params.projectRoot, "src", "cli", "main.ts")
+      ? resolveProjectRootRouterEntryPath(params.projectRoot)
       : resolveDefaultRouterEntryPath());
 
   await installRouterCommandLauncher(paths.routerCommandPath, routerEntryPath);
@@ -183,12 +186,27 @@ async function installRouterCommandLauncher(
 ): Promise<void> {
   const entryPath = path.resolve(routerEntryPath);
   const usesTsx = isTypeScriptEntry(entryPath);
+  const tsxImport = usesTsx ? resolveTsxLoaderImport() : undefined;
   const launcher = usesTsx
-    ? `#!/usr/bin/env bash\nset -euo pipefail\nexec node --import tsx ${shellEscape(entryPath)} "$@"\n`
+    ? `#!/usr/bin/env bash\nset -euo pipefail\nexec node --import ${shellEscape(tsxImport ?? "tsx")} ${shellEscape(entryPath)} "$@"\n`
     : `#!/usr/bin/env bash\nset -euo pipefail\nexec node ${shellEscape(entryPath)} "$@"\n`;
   await mkdir(path.dirname(routerCommandPath), { recursive: true });
   await writeFile(routerCommandPath, launcher, "utf8");
   await chmod(routerCommandPath, 0o755);
+}
+
+function resolveProjectRootRouterEntryPath(projectRoot: string): string {
+  const distEntry = path.resolve(projectRoot, "dist", "src", "cli", "main.js");
+  if (existsSync(distEntry)) {
+    return distEntry;
+  }
+
+  const sourceEntry = path.resolve(projectRoot, "src", "cli", "main.ts");
+  if (existsSync(sourceEntry)) {
+    return sourceEntry;
+  }
+
+  throw new Error(`router entry not found under project root: ${projectRoot}`);
 }
 
 function resolveDefaultRouterEntryPath(): string {
@@ -212,6 +230,15 @@ function resolveDefaultRouterEntryPath(): string {
 function isTypeScriptEntry(entryPath: string): boolean {
   const lower = entryPath.toLowerCase();
   return lower.endsWith(".ts") || lower.endsWith(".mts") || lower.endsWith(".cts");
+}
+
+function resolveTsxLoaderImport(): string {
+  try {
+    const tsxLoaderPath = require.resolve("tsx");
+    return pathToFileURL(tsxLoaderPath).href;
+  } catch {
+    return "tsx";
+  }
 }
 
 async function ensureAuthStoreBackup(authStorePath: string, installRoot: string): Promise<string> {

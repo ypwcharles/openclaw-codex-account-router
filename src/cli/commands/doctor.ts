@@ -68,7 +68,15 @@ export function registerDoctorCommand(program: Command): void {
 
 async function checkOpenClawBinary(): Promise<DoctorCheck> {
   try {
-    const result = await execa("openclaw", ["--help"], { reject: false, timeout: 3000 });
+    const result = await execa("openclaw", ["--help"], {
+      reject: false,
+      timeout: 1000,
+      stdout: "ignore",
+      stderr: "ignore"
+    });
+    if ((result as { timedOut?: boolean }).timedOut) {
+      return { id: "openclaw_binary", ok: false, detail: "openclaw --help timed out" };
+    }
     if (result.exitCode === 0) {
       return { id: "openclaw_binary", ok: true, detail: "openclaw is available" };
     }
@@ -77,9 +85,21 @@ async function checkOpenClawBinary(): Promise<DoctorCheck> {
       ok: false,
       detail: `openclaw --help exited with status ${result.exitCode ?? "unknown"}`
     };
-  } catch {
+  } catch (error) {
+    if (isTimedOutError(error)) {
+      return { id: "openclaw_binary", ok: false, detail: "openclaw --help timed out" };
+    }
     return { id: "openclaw_binary", ok: false, detail: "openclaw binary not found in PATH" };
   }
+}
+
+function isTimedOutError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "timedOut" in error &&
+      (error as { timedOut?: unknown }).timedOut === true
+  );
 }
 
 async function checkAuthStoreAccess(authStorePath: string): Promise<DoctorCheck> {

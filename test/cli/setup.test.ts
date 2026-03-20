@@ -204,4 +204,52 @@ describe("setup flow", () => {
     const backupRaw = await readFile(integrationState.authStoreBackupPath, "utf8");
     expect(JSON.parse(backupRaw)).toEqual(JSON.parse(secondAuthStoreRaw));
   });
+
+  it("prefers dist launcher entry for projectRoot installs", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "setup-project-root-dist-"));
+    const projectRoot = await mkdtemp(path.join(tmpdir(), "setup-project-root-src-"));
+    cleanupPaths.push(homeDir, projectRoot);
+
+    const authStorePath = path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
+    await mkdir(path.dirname(authStorePath), { recursive: true });
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": { provider: "openai-codex", access: "a" }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const sourceEntry = path.join(projectRoot, "src", "cli", "main.ts");
+    const distEntry = path.join(projectRoot, "dist", "src", "cli", "main.js");
+    await mkdir(path.dirname(sourceEntry), { recursive: true });
+    await mkdir(path.dirname(distEntry), { recursive: true });
+    await writeFile(sourceEntry, "export {}\n", "utf8");
+    await writeFile(distEntry, "console.log('ok')\n", "utf8");
+
+    await runSetup(
+      {
+        homeDir,
+        platform: "linux",
+        authStorePath,
+        projectRoot
+      },
+      {
+        discoverOpenClawProfiles: async () => ["openai-codex:a@example.com"],
+        resolveOpenClawBinary: async () => "/usr/bin/openclaw"
+      }
+    );
+
+    const launcherPath = path.join(homeDir, ".openclaw-router", "bin", "openclaw-router");
+    const launcherText = await readFile(launcherPath, "utf8");
+    expect(launcherText).toContain(distEntry);
+    expect(launcherText).not.toContain("--import tsx");
+  });
 });

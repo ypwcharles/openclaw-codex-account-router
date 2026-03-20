@@ -210,4 +210,65 @@ describe("status cli", () => {
     const payload = JSON.parse(stdout) as { integration: { installed: boolean } };
     expect(payload.integration.installed).toBe(false);
   });
+
+  it("uses router state path from integration state when --router-state is omitted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "status-intg-router-fallback-"));
+    cleanupPaths.push(dir);
+
+    const homeDir = path.join(dir, "home");
+    const routerStatePath = path.join(homeDir, ".openclaw-router", "router-state.json");
+    const integrationStatePath = path.join(homeDir, ".openclaw-router", "integration.json");
+    await mkdir(path.dirname(routerStatePath), { recursive: true });
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:a@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await writeFile(
+      integrationStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          platform: "linux",
+          installRoot: path.join(homeDir, ".openclaw-router"),
+          shimPath: path.join(homeDir, ".openclaw-router", "bin", "openclaw"),
+          realOpenClawPath: "/usr/bin/openclaw",
+          servicePath: path.join(homeDir, ".openclaw-router", "services", "openclaw-router-repair.service"),
+          lastSetupAt: "2026-03-19T10:00:00.000Z",
+          routerStatePath,
+          authStorePath: path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json"),
+          authStoreBackupPath: path.join(homeDir, ".openclaw-router", "backups", "auth-profiles.pre-router.json")
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const { stdout } = await execa(
+      "node",
+      ["--import", "tsx", "src/cli/main.ts", "status", "--integration-state", integrationStatePath, "--json"],
+      { cwd: repoRoot }
+    );
+
+    const payload = JSON.parse(stdout) as { currentOrder: string[] };
+    expect(payload.currentOrder).toEqual(["acct-a"]);
+  });
 });
