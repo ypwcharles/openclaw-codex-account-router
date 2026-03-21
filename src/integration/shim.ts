@@ -34,12 +34,6 @@ if [ "$REAL_OPENCLAW" = "$SHIM_PATH" ]; then
   exit 1
 fi
 
-case "\${1:-}" in
-  tui|update|--update)
-    exec "$REAL_OPENCLAW" "$@"
-    ;;
-esac
-
 exec "$ROUTER_COMMAND" run --integration-state "$STATE_PATH" -- "$REAL_OPENCLAW" "$@"
 `;
 }

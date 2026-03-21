@@ -90,25 +90,20 @@ describe("openclaw shim integration", () => {
     15000
   );
 
-  it("bypasses tui to the real openclaw binary and still routes normal commands", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-shim-bypass-"));
+  it("routes tui and normal commands through openclaw-router run", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-shim-routed-"));
     cleanupPaths.push(dir);
 
     const integrationStatePath = path.join(dir, "integration.json");
     const shimPath = path.join(dir, "bin", "openclaw");
     const routerCommand = path.join(dir, "bin", "openclaw-router");
     const realOpenClawPath = path.join(dir, "bin", "openclaw-real");
-    const realInvocationsPath = path.join(dir, "real-invocations.log");
     const routerInvocationsPath = path.join(dir, "router-invocations.log");
 
     await mkdir(path.dirname(realOpenClawPath), { recursive: true });
     await writeFile(
       realOpenClawPath,
-      `#!/usr/bin/env bash
-set -euo pipefail
-printf 'real:%s\\n' "$*" >> ${JSON.stringify(realInvocationsPath)}
-exit 0
-`,
+      "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n",
       "utf8"
     );
     await chmod(realOpenClawPath, 0o755);
@@ -152,12 +147,13 @@ exit 88
     });
 
     const tuiResult = await execa(shimPath, ["tui"], { reject: false });
-    expect(tuiResult.exitCode).toBe(0);
-    expect(await readFile(realInvocationsPath, "utf8")).toContain("real:tui");
+    expect(tuiResult.exitCode).toBe(88);
 
     const routedResult = await execa(shimPath, ["agent", "--message", "ping"], { reject: false });
     expect(routedResult.exitCode).toBe(88);
-    expect(await readFile(routerInvocationsPath, "utf8")).toContain("router:run --integration-state");
-    expect(await readFile(routerInvocationsPath, "utf8")).toContain("agent --message ping");
+    const routerInvocations = await readFile(routerInvocationsPath, "utf8");
+    expect(routerInvocations).toContain("router:run --integration-state");
+    expect(routerInvocations).toContain("tui");
+    expect(routerInvocations).toContain("agent --message ping");
   });
 });
