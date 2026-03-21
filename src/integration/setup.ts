@@ -3,9 +3,9 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { bindAccount, listAccounts } from "../account_store/bind.js";
 import { loadRouterState, saveRouterState } from "../account_store/store.js";
 import { normalizeCodexAuthProfiles } from "./auth_profiles.js";
+import { ensureBindingsForProfiles } from "./bindings.js";
 import {
   detectIntegrationPlatform,
   discoverOpenClawProfiles,
@@ -78,8 +78,8 @@ export async function runSetup(
   const currentState = await loadRouterState(routerStatePath);
   await saveRouterState(routerStatePath, currentState);
 
-  await ensureBindings({
-    discoveredProfiles,
+  await ensureBindingsForProfiles({
+    profileIds: discoveredProfiles,
     routerStatePath,
     authStorePath
   });
@@ -122,67 +122,8 @@ export async function runSetup(
   };
 }
 
-async function ensureBindings(params: {
-  discoveredProfiles: string[];
-  routerStatePath: string;
-  authStorePath: string;
-}): Promise<void> {
-  const discovered = [...new Set(params.discoveredProfiles.map((id) => id.trim()).filter(Boolean))];
-  if (discovered.length === 0) {
-    return;
-  }
-
-  const existing = await listAccounts(params.routerStatePath);
-  const existingAliases = new Set(existing.map((account) => account.alias));
-  const existingProfiles = new Set(existing.map((account) => account.profileId));
-
-  let aliasIndex = nextAliasIndex(existingAliases);
-  for (const profileId of discovered) {
-    if (existingProfiles.has(profileId)) {
-      continue;
-    }
-
-    const alias = resolveNextAlias(existingAliases, aliasIndex);
-    aliasIndex += 1;
-
-    await bindAccount({
-      alias,
-      profileId,
-      routerStatePath: params.routerStatePath,
-      authStorePath: params.authStorePath,
-      forceDefault: profileId === "openai-codex:default"
-    });
-
-    existingAliases.add(alias);
-    existingProfiles.add(profileId);
-  }
-}
-
 function resolveDefaultAuthStorePath(homeDir: string): string {
   return path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
-}
-
-function nextAliasIndex(existingAliases: Set<string>): number {
-  let max = 0;
-  for (const alias of existingAliases) {
-    const match = /^acct-(\d+)$/u.exec(alias);
-    if (!match) {
-      continue;
-    }
-    const value = Number(match[1]);
-    if (Number.isFinite(value)) {
-      max = Math.max(max, value);
-    }
-  }
-  return max + 1;
-}
-
-function resolveNextAlias(existingAliases: Set<string>, start: number): string {
-  let index = Math.max(1, start);
-  while (existingAliases.has(`acct-${index}`)) {
-    index += 1;
-  }
-  return `acct-${index}`;
 }
 
 async function installRouterCommandLauncher(

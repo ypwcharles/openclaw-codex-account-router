@@ -1,9 +1,9 @@
 import { Command } from "commander";
 import { execa } from "execa";
 import { normalizeCodexAuthProfiles } from "../../integration/auth_profiles.js";
+import { ensureBindingsForProfiles } from "../../integration/bindings.js";
 import { loadIntegrationState } from "../../integration/store.js";
-import { resolveAuthStorePath } from "../../shared/paths.js";
-import { resolveOptionalIntegrationStatePath } from "../../shared/paths.js";
+import { resolveAuthStorePath, resolveOptionalIntegrationStatePath, resolveRouterStatePath } from "../../shared/paths.js";
 
 type AuthLoginExecResult = {
   exitCode: number;
@@ -68,19 +68,36 @@ export function registerAuthCommand(program: Command): void {
     .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
+      const integrationState = await loadOptionalIntegrationState(
+        opts.integrationState as string | undefined
+      );
+      const authStorePath = resolveAuthStorePath(
+        ((opts.authStore as string | undefined) ?? integrationState?.authStorePath) as string | undefined
+      );
+      const routerStatePath = resolveRouterStatePath(integrationState?.routerStatePath);
       const result = await runCodexAuthLogin({
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined),
+        authStorePath,
         command: await resolveAuthLoginCommand(opts.integrationState as string | undefined),
         args: ["models", "auth", "login", "--provider", "openai-codex"]
       });
+      const boundAccounts = await ensureBindingsForProfiles({
+        profileIds: result.migratedProfileIds,
+        routerStatePath,
+        authStorePath
+      });
 
       if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
+        console.log(JSON.stringify({ ...result, boundAccounts }, null, 2));
         return;
       }
 
       if (result.migratedProfileIds.length > 0) {
         console.log(`Normalized profiles: ${result.migratedProfileIds.join(", ")}`);
+      }
+      if (boundAccounts.length > 0) {
+        console.log(
+          `Added routed accounts: ${boundAccounts.map((item) => `${item.alias} -> ${item.profileId}`).join(", ")}`
+        );
       }
     });
 
@@ -88,23 +105,41 @@ export function registerAuthCommand(program: Command): void {
     .command("normalize")
     .description("Normalize the existing OpenClaw auth store into stable email-based codex profiles")
     .option("--auth-store <path>", "OpenClaw auth store path")
+    .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
+      const integrationState = await loadOptionalIntegrationState(
+        opts.integrationState as string | undefined
+      );
+      const authStorePath = resolveAuthStorePath(
+        ((opts.authStore as string | undefined) ?? integrationState?.authStorePath) as string | undefined
+      );
+      const routerStatePath = resolveRouterStatePath(integrationState?.routerStatePath);
       const result = await runCodexAuthNormalize({
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
+        authStorePath
+      });
+      const boundAccounts = await ensureBindingsForProfiles({
+        profileIds: result.migratedProfileIds,
+        routerStatePath,
+        authStorePath
       });
 
       if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
+        console.log(JSON.stringify({ ...result, boundAccounts }, null, 2));
         return;
       }
 
       if (result.migratedProfileIds.length > 0) {
         console.log(`Normalized profiles: ${result.migratedProfileIds.join(", ")}`);
-        return;
       }
-
-      console.log("No codex profiles needed normalization.");
+      if (boundAccounts.length > 0) {
+        console.log(
+          `Added routed accounts: ${boundAccounts.map((item) => `${item.alias} -> ${item.profileId}`).join(", ")}`
+        );
+      }
+      if (result.migratedProfileIds.length === 0 && boundAccounts.length === 0) {
+        console.log("No codex profiles needed normalization.");
+      }
     });
 }
 
@@ -114,7 +149,7 @@ async function resolveAuthLoginCommand(explicitIntegrationStatePath?: string): P
     return "openclaw";
   }
 
-  const integrationState = await loadIntegrationState(integrationStatePath);
+  const integrationState = await loadOptionalIntegrationState(explicitIntegrationStatePath);
   return integrationState?.realOpenClawPath?.trim() || "openclaw";
 }
 
@@ -211,4 +246,26 @@ function asErrorWithCause(error: unknown): { message: string; code?: string } {
           : String(error),
     code: typeof cause?.code === "string" ? cause.code : undefined
   };
+}
+
+async function loadOptionalIntegrationState(
+  explicitIntegrationStatePath?: string
+): Promise<
+  | {
+      realOpenClawPath?: string;
+      routerStatePath?: string;
+      authStorePath?: string;
+    }
+  | undefined
+> {
+  const integrationStatePath = resolveOptionalIntegrationStatePath(explicitIntegrationStatePath);
+  if (!integrationStatePath) {
+    return undefined;
+  }
+
+  try {
+    return await loadIntegrationState(integrationStatePath);
+  } catch {
+    return undefined;
+  }
 }

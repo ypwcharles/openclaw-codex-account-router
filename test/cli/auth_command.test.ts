@@ -102,14 +102,23 @@ fs.writeFileSync(authStorePath, JSON.stringify(raw, null, 2));
         profiles: Record<string, unknown>;
         order?: Record<string, string[]>;
       };
+      const routerStatePath = path.join(homeDir, ".openclaw-router", "router-state.json");
+      const routerState = JSON.parse(await readFile(routerStatePath, "utf8")) as {
+        accounts: Array<{ alias: string; profileId: string }>;
+      };
 
       expect(Object.keys(authStore.profiles).sort()).toEqual([
         "openai-codex:first@example.com",
         "openai-codex:second@example.com"
       ]);
       expect(authStore.order?.["openai-codex"]).toEqual([
-        "openai-codex:second@example.com",
-        "openai-codex:first@example.com"
+        "openai-codex:first@example.com",
+        "openai-codex:second@example.com"
+      ]);
+      expect(routerState.accounts.map((item) => item.alias)).toEqual(["acct-1", "acct-2"]);
+      expect(routerState.accounts.map((item) => item.profileId)).toEqual([
+        "openai-codex:first@example.com",
+        "openai-codex:second@example.com"
       ]);
     },
     15000
@@ -292,9 +301,15 @@ fs.writeFileSync(authStorePath, JSON.stringify(raw, null, 2));
       const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
         profiles: Record<string, unknown>;
       };
+      const routerState = JSON.parse(
+        await readFile(path.join(homeDir, ".openclaw-router", "router-state.json"), "utf8")
+      ) as { accounts: Array<{ alias: string; profileId: string }> };
 
       expect(result.stderr).not.toContain("shim-was-invoked");
       expect(Object.keys(authStore.profiles)).toEqual(["openai-codex:real@example.com"]);
+      expect(routerState.accounts.map((item) => item.profileId)).toEqual([
+        "openai-codex:real@example.com"
+      ]);
     },
     15000
   );
@@ -354,11 +369,89 @@ fs.writeFileSync(authStorePath, JSON.stringify(raw, null, 2));
       );
 
       expect(stdout).toContain("Normalized profiles: openai-codex:normalized@example.com");
+      expect(stdout).toContain(
+        "Added routed accounts: acct-1 -> openai-codex:normalized@example.com"
+      );
 
       const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
         profiles: Record<string, unknown>;
       };
+      const routerState = JSON.parse(
+        await readFile(path.join(homeDir, ".openclaw-router", "router-state.json"), "utf8")
+      ) as { accounts: Array<{ alias: string; profileId: string }> };
       expect(Object.keys(authStore.profiles)).toEqual(["openai-codex:normalized@example.com"]);
+      expect(routerState.accounts.map((item) => item.profileId)).toEqual([
+        "openai-codex:normalized@example.com"
+      ]);
+    },
+    15000
+  );
+
+  it(
+    "falls back to PATH openclaw when integration state is unreadable",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "auth-login-cli-bad-intg-"));
+      cleanupPaths.push(dir);
+
+      const homeDir = path.join(dir, "home");
+      const authStorePath = path.join(dir, "auth-profiles.json");
+      const integrationStatePath = path.join(homeDir, ".openclaw-router", "integration.json");
+      const fakeBinDir = path.join(dir, "bin");
+      const fakeOpenClawPath = path.join(fakeBinDir, "openclaw");
+      await mkdir(path.dirname(authStorePath), { recursive: true });
+      await mkdir(path.dirname(integrationStatePath), { recursive: true });
+      await mkdir(fakeBinDir, { recursive: true });
+      await writeFile(
+        authStorePath,
+        JSON.stringify({ version: 1, profiles: {}, order: {}, usageStats: {} }, null, 2),
+        "utf8"
+      );
+      await writeFile(integrationStatePath, "{ invalid json", "utf8");
+      await writeFile(
+        fakeOpenClawPath,
+        `#!/usr/bin/env bash
+set -euo pipefail
+auth_store="$AUTH_STORE_PATH"
+node -e '
+const fs = require("fs");
+const [authStorePath] = process.argv.slice(1);
+const raw = JSON.parse(fs.readFileSync(authStorePath, "utf8"));
+const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+const payload = Buffer.from(JSON.stringify({ "https://api.openai.com/profile": { email: "pathfallback@example.com" } })).toString("base64url");
+raw.profiles["openai-codex:default"] = { provider: "openai-codex", access: header + "." + payload + ".signature" };
+raw.order["openai-codex"] = ["openai-codex:default"];
+fs.writeFileSync(authStorePath, JSON.stringify(raw, null, 2));
+' "$auth_store"
+`,
+        "utf8"
+      );
+      await chmod(fakeOpenClawPath, 0o755);
+
+      const { stdout } = await execa(
+        "node",
+        [
+          "--import",
+          "tsx",
+          "src/cli/main.ts",
+          "auth",
+          "login",
+          "--auth-store",
+          authStorePath,
+          "--integration-state",
+          integrationStatePath
+        ],
+        {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            HOME: homeDir,
+            PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            AUTH_STORE_PATH: authStorePath
+          }
+        }
+      );
+
+      expect(stdout).toContain("Normalized profiles: openai-codex:pathfallback@example.com");
     },
     15000
   );
