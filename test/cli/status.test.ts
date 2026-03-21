@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -311,6 +311,91 @@ describe("status cli", () => {
     expect(payload.accounts.find((account) => account.alias === "acct-b")?.selected).toBe(true);
   });
 
+  it("does not surface stale auth failure counts as current last error", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "status-cli-stale-errors-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:a@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "a"
+            }
+          },
+          usageStats: {
+            "openai-codex:a@example.com": {
+              lastUsed: Date.parse("2026-03-21T10:02:40.664Z"),
+              errorCount: 0,
+              failureCounts: {
+                rate_limit: 3,
+                timeout: 1
+              }
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const { stdout } = await execa(
+      "node",
+      [
+        "--import",
+        "tsx",
+        "src/cli/main.ts",
+        "status",
+        "--router-state",
+        routerStatePath,
+        "--auth-store",
+        authStorePath,
+        "--json"
+      ],
+      { cwd: repoRoot }
+    );
+
+    const payload = JSON.parse(stdout) as {
+      lastErrorCodes: Array<{ alias: string; code?: string }>;
+      accounts: Array<{ alias: string; lastErrorCode?: string; effectiveStatus: string }>;
+    };
+
+    expect(payload.accounts.find((account) => account.alias === "acct-a")?.effectiveStatus).toBe(
+      "healthy"
+    );
+    expect(payload.accounts.find((account) => account.alias === "acct-a")?.lastErrorCode).toBeUndefined();
+    expect(payload.lastErrorCodes.find((item) => item.alias === "acct-a")?.code).toBeUndefined();
+  });
+
   it("falls back to router-only status when auth store is malformed", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "status-cli-bad-auth-"));
     cleanupPaths.push(dir);
@@ -374,6 +459,73 @@ describe("status cli", () => {
       effectiveStatus: "healthy",
       selected: true
     });
+  });
+
+  it("falls back to router-only status when auth store is unreadable", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "status-cli-unreadable-auth-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:a@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(authStorePath, JSON.stringify({ version: 1, profiles: {}, usageStats: {} }), "utf8");
+    await chmod(authStorePath, 0o000);
+
+    try {
+      const { stdout } = await execa(
+        "node",
+        [
+          "--import",
+          "tsx",
+          "src/cli/main.ts",
+          "status",
+          "--router-state",
+          routerStatePath,
+          "--auth-store",
+          authStorePath,
+          "--json"
+        ],
+        { cwd: repoRoot }
+      );
+
+      const payload = JSON.parse(stdout) as {
+        currentOrder: string[];
+        authLastGoodProfileId?: string;
+        cooldowns: Array<{ alias: string; until?: string }>;
+        accounts: Array<{ alias: string; effectiveStatus: string; selected: boolean }>;
+      };
+
+      expect(payload.currentOrder).toEqual(["acct-a"]);
+      expect(payload.authLastGoodProfileId).toBeUndefined();
+      expect(payload.cooldowns).toEqual([]);
+      expect(payload.accounts[0]).toMatchObject({
+        alias: "acct-a",
+        effectiveStatus: "healthy",
+        selected: true
+      });
+    } finally {
+      await chmod(authStorePath, 0o600);
+    }
   });
 
   it("auto-loads default integration state from HOME when option is omitted", async () => {

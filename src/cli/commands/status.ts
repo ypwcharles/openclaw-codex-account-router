@@ -179,7 +179,7 @@ async function loadOpenClawAuthStatus(
       usageStats: parsed.usageStats ?? {}
     };
   } catch (error) {
-    if (isFileNotFound(error) || isMalformedJson(error)) {
+    if (isOptionalAuthStoreError(error)) {
       return undefined;
     }
     throw error;
@@ -428,7 +428,11 @@ function resolveEffectiveErrorCode(
   authUsage:
     | {
         disabledReason?: string;
-        failureCounts?: Record<string, number>;
+        retryReason?: string;
+        limitReached?: boolean;
+        quota?: {
+          limitReached?: boolean;
+        };
       }
     | undefined,
   effectiveStatus: AccountStatus
@@ -439,14 +443,13 @@ function resolveEffectiveErrorCode(
   if (effectiveStatus === "disabled" && authUsage?.disabledReason) {
     return authUsage.disabledReason;
   }
-  if (!authUsage?.failureCounts) {
-    return undefined;
+  if (effectiveStatus === "cooldown" && authUsage?.retryReason) {
+    return authUsage.retryReason;
   }
-  if (authUsage.failureCounts.rate_limit) {
+  if (effectiveStatus === "cooldown" && isQuotaLimitReached(authUsage)) {
     return "rate_limit";
   }
-  const [firstReason] = Object.keys(authUsage.failureCounts);
-  return firstReason;
+  return undefined;
 }
 
 function parseIsoTimestamp(value: string | undefined): number | undefined {
@@ -481,17 +484,35 @@ function formatTimestamp(value: number | undefined): string | undefined {
   return new Date(value).toISOString();
 }
 
-function isFileNotFound(error: unknown): boolean {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "ENOENT"
-  );
+function isOptionalAuthStoreError(error: unknown): boolean {
+  return isFileSystemError(error, ["ENOENT", "EACCES", "EPERM", "EISDIR", "ENOTDIR"]) || isMalformedJson(error);
 }
 
 function isMalformedJson(error: unknown): boolean {
   return error instanceof SyntaxError;
+}
+
+function isFileSystemError(error: unknown, allowedCodes: string[]): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      typeof (error as { code?: unknown }).code === "string" &&
+      allowedCodes.includes((error as { code: string }).code)
+  );
+}
+
+function isQuotaLimitReached(
+  authUsage:
+    | {
+        limitReached?: boolean;
+        quota?: {
+          limitReached?: boolean;
+        };
+      }
+    | undefined
+): boolean {
+  return authUsage?.quota?.limitReached === true || authUsage?.limitReached === true;
 }
 
 async function resolveIntegrationStatus(
