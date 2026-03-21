@@ -20,6 +20,7 @@ describe("auth login cli", () => {
       const dir = await mkdtemp(path.join(tmpdir(), "auth-login-cli-"));
       cleanupPaths.push(dir);
 
+      const homeDir = path.join(dir, "home");
       const authStorePath = path.join(dir, "auth-profiles.json");
       const fakeBinDir = path.join(dir, "bin");
       const fakeOpenClawPath = path.join(fakeBinDir, "openclaw");
@@ -68,6 +69,7 @@ fs.writeFileSync(authStorePath, JSON.stringify(raw, null, 2));
 
       const baseEnv = {
         ...process.env,
+        HOME: homeDir,
         PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
         AUTH_STORE_PATH: authStorePath
       };
@@ -119,6 +121,7 @@ fs.writeFileSync(authStorePath, JSON.stringify(raw, null, 2));
       const dir = await mkdtemp(path.join(tmpdir(), "auth-login-cli-reauth-"));
       cleanupPaths.push(dir);
 
+      const homeDir = path.join(dir, "home");
       const authStorePath = path.join(dir, "auth-profiles.json");
       const fakeBinDir = path.join(dir, "bin");
       const fakeOpenClawPath = path.join(fakeBinDir, "openclaw");
@@ -180,6 +183,7 @@ fs.writeFileSync(authStorePath, JSON.stringify(raw, null, 2));
           cwd: repoRoot,
           env: {
             ...process.env,
+            HOME: homeDir,
             PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
             AUTH_STORE_PATH: authStorePath,
             LOGIN_EMAIL: "first@example.com"
@@ -198,6 +202,163 @@ fs.writeFileSync(authStorePath, JSON.stringify(raw, null, 2));
       expect(authStore.order?.["openai-codex"]).toEqual(["openai-codex:first@example.com"]);
       expect(authStore.usageStats?.["openai-codex:first@example.com"]?.cooldownUntil).toBe(67890);
       expect(authStore.usageStats?.["openai-codex:default"]).toBeUndefined();
+    },
+    15000
+  );
+
+  it(
+    "bypasses the managed shim and uses the real openclaw binary from integration state",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "auth-login-cli-real-bin-"));
+      cleanupPaths.push(dir);
+
+      const homeDir = path.join(dir, "home");
+      const authStorePath = path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
+      const integrationStatePath = path.join(homeDir, ".openclaw-router", "integration.json");
+      const shimBinDir = path.join(dir, "shim-bin");
+      const shimOpenClawPath = path.join(shimBinDir, "openclaw");
+      const realBinDir = path.join(dir, "real-bin");
+      const realOpenClawPath = path.join(realBinDir, "openclaw");
+
+      await mkdir(path.dirname(authStorePath), { recursive: true });
+      await mkdir(path.dirname(integrationStatePath), { recursive: true });
+      await mkdir(shimBinDir, { recursive: true });
+      await mkdir(realBinDir, { recursive: true });
+      await writeFile(
+        authStorePath,
+        JSON.stringify({ version: 1, profiles: {}, order: {}, usageStats: {} }, null, 2),
+        "utf8"
+      );
+      await writeFile(
+        integrationStatePath,
+        JSON.stringify(
+          {
+            version: 1,
+            platform: "linux",
+            installRoot: path.join(homeDir, ".openclaw-router"),
+            shimPath: shimOpenClawPath,
+            realOpenClawPath,
+            servicePath: path.join(homeDir, ".openclaw-router", "services", "openclaw-router-repair.service"),
+            lastSetupAt: "2026-03-21T00:00:00.000Z",
+            routerStatePath: path.join(homeDir, ".openclaw-router", "router-state.json"),
+            authStorePath,
+            authStoreBackupPath: path.join(homeDir, ".openclaw-router", "backups", "auth-profiles.pre-router.json")
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+      await writeFile(
+        shimOpenClawPath,
+        "#!/usr/bin/env bash\nset -euo pipefail\necho shim-was-invoked >&2\nexit 99\n",
+        "utf8"
+      );
+      await chmod(shimOpenClawPath, 0o755);
+      await writeFile(
+        realOpenClawPath,
+        `#!/usr/bin/env bash
+set -euo pipefail
+auth_store="$AUTH_STORE_PATH"
+node -e '
+const fs = require("fs");
+const [authStorePath] = process.argv.slice(1);
+const raw = JSON.parse(fs.readFileSync(authStorePath, "utf8"));
+const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+const payload = Buffer.from(JSON.stringify({ "https://api.openai.com/profile": { email: "real@example.com" } })).toString("base64url");
+raw.profiles["openai-codex:default"] = { provider: "openai-codex", access: header + "." + payload + ".signature" };
+raw.order["openai-codex"] = ["openai-codex:default"];
+fs.writeFileSync(authStorePath, JSON.stringify(raw, null, 2));
+' "$auth_store"
+`,
+        "utf8"
+      );
+      await chmod(realOpenClawPath, 0o755);
+
+      const result = await execa(
+        "node",
+        ["--import", "tsx", "src/cli/main.ts", "auth", "login", "--auth-store", authStorePath],
+        {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            HOME: homeDir,
+            PATH: `${shimBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            AUTH_STORE_PATH: authStorePath
+          }
+        }
+      );
+
+      const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+        profiles: Record<string, unknown>;
+      };
+
+      expect(result.stderr).not.toContain("shim-was-invoked");
+      expect(Object.keys(authStore.profiles)).toEqual(["openai-codex:real@example.com"]);
+    },
+    15000
+  );
+
+  it(
+    "normalizes an existing default codex profile without invoking the real openclaw login",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "auth-normalize-cli-"));
+      cleanupPaths.push(dir);
+
+      const homeDir = path.join(dir, "home");
+      const authStorePath = path.join(dir, "auth-profiles.json");
+      const fakeBinDir = path.join(dir, "bin");
+      const fakeOpenClawPath = path.join(fakeBinDir, "openclaw");
+      await mkdir(path.dirname(authStorePath), { recursive: true });
+      await mkdir(fakeBinDir, { recursive: true });
+      await writeFile(
+        authStorePath,
+        JSON.stringify(
+          {
+            version: 1,
+            profiles: {
+              "openai-codex:default": {
+                provider: "openai-codex",
+                access:
+                  "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL3Byb2ZpbGUiOnsiZW1haWwiOiJub3JtYWxpemVkQGV4YW1wbGUuY29tIn19.signature",
+                refresh: "refresh-token"
+              }
+            },
+            order: {
+              "openai-codex": ["openai-codex:default"]
+            }
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+      await writeFile(
+        fakeOpenClawPath,
+        "#!/usr/bin/env bash\nset -euo pipefail\necho should-not-run >&2\nexit 99\n",
+        "utf8"
+      );
+      await chmod(fakeOpenClawPath, 0o755);
+
+      const { stdout } = await execa(
+        "node",
+        ["--import", "tsx", "src/cli/main.ts", "auth", "normalize", "--auth-store", authStorePath],
+        {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            HOME: homeDir,
+            PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`
+          }
+        }
+      );
+
+      expect(stdout).toContain("Normalized profiles: openai-codex:normalized@example.com");
+
+      const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+        profiles: Record<string, unknown>;
+      };
+      expect(Object.keys(authStore.profiles)).toEqual(["openai-codex:normalized@example.com"]);
     },
     15000
   );

@@ -1,4 +1,4 @@
-import { access, constants, readFile, stat } from "node:fs/promises";
+import { access, constants, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { IntegrationPlatform } from "./types.js";
 
@@ -69,6 +69,10 @@ export async function discoverOpenClawProfiles(authStorePath: string): Promise<s
 
 async function resolveExecutablePath(candidate: string): Promise<string | undefined> {
   try {
+    const stats = await stat(candidate);
+    if (!stats.isFile()) {
+      return undefined;
+    }
     await access(candidate, constants.X_OK);
     return await normalizePath(candidate);
   } catch {
@@ -77,12 +81,14 @@ async function resolveExecutablePath(candidate: string): Promise<string | undefi
 }
 
 async function normalizePath(targetPath: string): Promise<string> {
-  // Use realpath only when needed; fall back to resolve to avoid
-  // hangs on non-existent or WSL-accessible Windows paths.
+  const resolvedPath = path.resolve(targetPath);
+
+  // Canonicalize existing filesystem entries so symlinked PATH entries
+  // cannot bypass shim exclusion checks.
   try {
-    return await stat(targetPath).then(() => path.resolve(targetPath));
+    return await realpath(resolvedPath);
   } catch {
-    return path.resolve(targetPath);
+    return resolvedPath;
   }
 }
 

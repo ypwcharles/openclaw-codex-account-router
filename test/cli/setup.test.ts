@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { execa } from "execa";
 import { fileURLToPath } from "node:url";
+import { resolveOpenClawBinaryPath } from "../../src/integration/discovery.js";
 import { runSetup } from "../../src/integration/setup.js";
 
 const cleanupPaths: string[] = [];
@@ -131,6 +132,64 @@ describe("setup flow", () => {
         realOpenClawPath: string;
       };
       expect(state.realOpenClawPath).toBe(realOpenClawPath);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it("skips symlinked PATH entries that point at the managed shim dir", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "setup-skip-symlinked-shim-dir-"));
+    cleanupPaths.push(homeDir);
+
+    const managedBinDir = path.join(homeDir, ".openclaw-router", "bin");
+    const managedShimPath = path.join(managedBinDir, "openclaw");
+    const symlinkRoot = path.join(homeDir, "path-alias");
+    const symlinkedManagedBinDir = path.join(symlinkRoot, "managed-bin");
+    const realBinDir = path.join(homeDir, "real-bin");
+    const realOpenClawPath = path.join(realBinDir, "openclaw");
+
+    await mkdir(managedBinDir, { recursive: true });
+    await mkdir(realBinDir, { recursive: true });
+    await mkdir(symlinkRoot, { recursive: true });
+    await writeFile(managedShimPath, "#!/usr/bin/env bash\necho shim\n", "utf8");
+    await chmod(managedShimPath, 0o755);
+    await writeFile(realOpenClawPath, "#!/usr/bin/env bash\necho real\n", "utf8");
+    await chmod(realOpenClawPath, 0o755);
+
+    const { symlink } = await import("node:fs/promises");
+    await symlink(managedBinDir, symlinkedManagedBinDir);
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${symlinkedManagedBinDir}${path.delimiter}${realBinDir}${path.delimiter}${originalPath ?? ""}`;
+    try {
+      await expect(
+        resolveOpenClawBinaryPath({
+          excludePaths: [managedBinDir]
+        })
+      ).resolves.toBe(realOpenClawPath);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it("ignores PATH entries where openclaw is a directory instead of a binary", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "setup-ignore-openclaw-dir-"));
+    cleanupPaths.push(homeDir);
+
+    const invalidBinDir = path.join(homeDir, "invalid-bin");
+    const invalidOpenClawDir = path.join(invalidBinDir, "openclaw");
+    const realBinDir = path.join(homeDir, "real-bin");
+    const realOpenClawPath = path.join(realBinDir, "openclaw");
+
+    await mkdir(invalidOpenClawDir, { recursive: true });
+    await mkdir(realBinDir, { recursive: true });
+    await writeFile(realOpenClawPath, "#!/usr/bin/env bash\necho real\n", "utf8");
+    await chmod(realOpenClawPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${invalidBinDir}${path.delimiter}${realBinDir}${path.delimiter}${originalPath ?? ""}`;
+    try {
+      await expect(resolveOpenClawBinaryPath()).resolves.toBe(realOpenClawPath);
     } finally {
       process.env.PATH = originalPath;
     }
