@@ -86,6 +86,56 @@ describe("setup flow", () => {
     }
   });
 
+  it("skips the managed shim dir when resolving the real openclaw binary", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "setup-skip-shim-dir-"));
+    cleanupPaths.push(homeDir);
+
+    const authStorePath = path.join(homeDir, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
+    await mkdir(path.dirname(authStorePath), { recursive: true });
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": { provider: "openai-codex", access: "a" }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const managedBinDir = path.join(homeDir, ".openclaw-router", "bin");
+    const managedShimPath = path.join(managedBinDir, "openclaw");
+    const realBinDir = path.join(homeDir, "real-bin");
+    const realOpenClawPath = path.join(realBinDir, "openclaw");
+    await mkdir(managedBinDir, { recursive: true });
+    await mkdir(realBinDir, { recursive: true });
+    await writeFile(managedShimPath, "#!/usr/bin/env bash\necho shim\n", "utf8");
+    await chmod(managedShimPath, 0o755);
+    await writeFile(realOpenClawPath, "#!/usr/bin/env bash\necho real\n", "utf8");
+    await chmod(realOpenClawPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${managedBinDir}${path.delimiter}${realBinDir}${path.delimiter}${originalPath ?? ""}`;
+    try {
+      const result = await runSetup({
+        homeDir,
+        platform: "linux",
+        authStorePath
+      });
+
+      const state = JSON.parse(await readFile(result.integrationStatePath, "utf8")) as {
+        realOpenClawPath: string;
+      };
+      expect(state.realOpenClawPath).toBe(realOpenClawPath);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
   it("creates a managed launcher that works even when setup runs outside repo root", async () => {
     const homeDir = await mkdtemp(path.join(tmpdir(), "setup-cwd-"));
     const foreignCwd = await mkdtemp(path.join(tmpdir(), "setup-foreign-cwd-"));
@@ -141,7 +191,7 @@ describe("setup flow", () => {
     expect(stdout).toContain("setup");
   });
 
-  it("preserves the original auth backup on setup rerun", async () => {
+  it("refreshes auth backup on every setup rerun", async () => {
     const homeDir = await mkdtemp(path.join(tmpdir(), "setup-rerun-backup-"));
     cleanupPaths.push(homeDir);
 
@@ -212,7 +262,7 @@ describe("setup flow", () => {
     }
 
     const backupRaw = await readFile(integrationState.authStoreBackupPath, "utf8");
-    expect(JSON.parse(backupRaw)).toEqual(JSON.parse(firstAuthStoreRaw));
+    expect(JSON.parse(backupRaw)).toEqual(JSON.parse(secondAuthStoreRaw));
   });
 
   it("prefers dist launcher entry for projectRoot installs", async () => {

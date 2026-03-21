@@ -23,4 +23,15 @@ describe("openclaw shim", () => {
     expect(text).toContain("exec");
     expect(text).toContain("integration.json");
   });
+
+  it("fails fast when integration state points back to the shim", () => {
+    const text = renderOpenClawShim({
+      routerCommand: "/Users/tester/.openclaw-router/bin/openclaw-router",
+      integrationStatePath: "/Users/tester/.openclaw-router/integration.json"
+    });
+
+    expect(text).toContain('SHIM_PATH="$0"');
+    expect(text).toContain('if [ "$REAL_OPENCLAW" = "$SHIM_PATH" ]; then');
+    expect(text).toContain("misconfigured: realOpenClawPath points to shim");
+  });
 });
