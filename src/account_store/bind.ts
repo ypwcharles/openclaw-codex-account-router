@@ -149,13 +149,10 @@ export async function setAccountEnabled(params: {
   state.accounts[index] = next;
   state.accounts.sort((a, b) => a.priority - b.priority);
   await saveRouterState(params.routerStatePath, state);
-  await syncCodexOrder(
-    params.authStorePath,
-    state.accounts.filter((item) => item.enabled).map((item) => item.profileId)
-  );
   if (params.enabled) {
     await clearProfileFailureState(params.authStorePath, next.profileId);
   }
+  await syncCodexOrder(params.authStorePath, resolveRoutableProfileOrder(state.accounts, new Date()));
   return state;
 }
 
@@ -203,7 +200,7 @@ export async function setAccountOrderByAlias(params: {
   await saveRouterState(params.routerStatePath, nextState);
   await syncCodexOrder(
     params.authStorePath,
-    nextAccounts.filter((item) => item.enabled).map((item) => item.profileId)
+    resolveRoutableProfileOrder(nextAccounts, new Date())
   );
   return nextState;
 }
@@ -291,6 +288,7 @@ export async function clearAccountCooldown(params: {
   };
   await saveRouterState(params.routerStatePath, state);
   await clearProfileCooldown(params.authStorePath, current.profileId);
+  await syncCodexOrder(params.authStorePath, resolveRoutableProfileOrder(state.accounts, new Date()));
   return state;
 }
 

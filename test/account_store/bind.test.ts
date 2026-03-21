@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   bindAccount,
   clearAccountCooldown,
-  setAccountEnabled
+  setAccountEnabled,
+  setAccountOrderByAlias
 } from "../../src/account_store/bind.js";
 
 const cleanupPaths: string[] = [];
@@ -560,13 +561,156 @@ describe("bind account", () => {
       accounts: Array<{ alias: string; status: string; enabled: boolean }>;
     };
     const auth = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      order?: Record<string, string[]>;
       usageStats?: Record<string, { disabledUntil?: number; disabledReason?: string }>;
     };
 
     expect(router.accounts[0]?.enabled).toBe(true);
     expect(router.accounts[0]?.status).toBe("healthy");
+    expect(auth.order?.["openai-codex"]).toEqual(["openai-codex:user@example.com"]);
     expect(auth.usageStats?.["openai-codex:user@example.com"]?.disabledUntil).toBeUndefined();
     expect(auth.usageStats?.["openai-codex:user@example.com"]?.disabledReason).toBeUndefined();
+  });
+
+  it("enable does not reintroduce cooldown accounts into synced order", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "bind-account-enable-cooldown-order-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:a@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "cooldown",
+              enabled: false,
+              cooldownUntil: "2099-01-01T00:00:00.000Z",
+              lastErrorCode: "rate_limit"
+            },
+            {
+              alias: "acct-b",
+              profileId: "openai-codex:b@example.com",
+              provider: "openai-codex",
+              priority: 20,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": { type: "oauth", provider: "openai-codex", access: "a" },
+            "openai-codex:b@example.com": { type: "oauth", provider: "openai-codex", access: "b" }
+          },
+          order: {},
+          usageStats: {
+            "openai-codex:a@example.com": {
+              cooldownUntil: 9_999_999_999_999
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await setAccountEnabled({
+      routerStatePath,
+      authStorePath,
+      alias: "acct-a",
+      enabled: true
+    });
+
+    const auth = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      order?: Record<string, string[]>;
+    };
+    expect(auth.order?.["openai-codex"]).toEqual(["openai-codex:b@example.com"]);
+  });
+
+  it("setAccountOrderByAlias syncs only routable profiles", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "bind-account-order-routable-only-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:a@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "cooldown",
+              enabled: true,
+              cooldownUntil: "2099-01-01T00:00:00.000Z",
+              lastErrorCode: "rate_limit"
+            },
+            {
+              alias: "acct-b",
+              profileId: "openai-codex:b@example.com",
+              provider: "openai-codex",
+              priority: 20,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": { type: "oauth", provider: "openai-codex", access: "a" },
+            "openai-codex:b@example.com": { type: "oauth", provider: "openai-codex", access: "b" }
+          },
+          order: {},
+          usageStats: {}
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await setAccountOrderByAlias({
+      routerStatePath,
+      authStorePath,
+      aliases: ["acct-a", "acct-b"]
+    });
+
+    const auth = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      order?: Record<string, string[]>;
+    };
+    expect(auth.order?.["openai-codex"]).toEqual(["openai-codex:b@example.com"]);
   });
 
   it("cooldown clear only clears cooldown and mirrors state reset", async () => {
@@ -639,6 +783,7 @@ describe("bind account", () => {
       accounts: Array<{ alias: string; status: string; lastErrorCode?: string; cooldownUntil?: string }>;
     };
     const auth = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      order?: Record<string, string[]>;
       usageStats?: Record<
         string,
         { cooldownUntil?: number; disabledUntil?: number; disabledReason?: string }
@@ -651,6 +796,7 @@ describe("bind account", () => {
     expect(acctA?.lastErrorCode).toBeUndefined();
     expect(acctA?.cooldownUntil).toBeUndefined();
     expect(acctB?.status).toBe("disabled");
+    expect(auth.order?.["openai-codex"]).toEqual(["openai-codex:user@example.com"]);
     expect(auth.usageStats?.["openai-codex:user@example.com"]?.cooldownUntil).toBeUndefined();
     expect(auth.usageStats?.["openai-codex:user2@example.com"]?.disabledUntil).toBeUndefined();
     expect(auth.usageStats?.["openai-codex:user2@example.com"]?.disabledReason).toBeUndefined();
