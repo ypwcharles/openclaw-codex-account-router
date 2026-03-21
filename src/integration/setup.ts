@@ -283,6 +283,10 @@ async function rewriteRouterStateProfileIds(
 async function ensureAuthStoreBackup(authStorePath: string, installRoot: string): Promise<string> {
   const backupDir = path.join(installRoot, "backups");
   const backupPath = path.join(backupDir, "auth-profiles.pre-router.json");
+  if (existsSync(backupPath)) {
+    return backupPath;
+  }
+
   const raw = await readFile(authStorePath, "utf8");
   await mkdir(backupDir, { recursive: true });
   await writeFile(backupPath, raw, "utf8");
