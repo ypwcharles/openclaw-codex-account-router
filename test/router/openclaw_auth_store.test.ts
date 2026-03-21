@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -121,6 +121,85 @@ describe("openclaw auth bridge", () => {
       expect(next.order?.["openai-codex"]?.[0]).toBe("openai-codex:b@example.com");
     } finally {
       process.env.HOME = previousHome;
+    }
+  });
+
+  it("skips gateway restart when runtime session overrides are already aligned", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-auth-home-"));
+    cleanupPaths.push(dir);
+    const previousHome = process.env.HOME;
+    const previousPath = process.env.PATH;
+    process.env.HOME = dir;
+
+    try {
+      const authPath = resolveDefaultOpenClawAuthStorePath();
+      const sessionStorePath = resolveDefaultOpenClawSessionStorePath();
+      const servicePath = path.join(dir, ".config", "systemd", "user", "openclaw-gateway.service");
+      const binDir = path.join(dir, "bin");
+      const logPath = path.join(dir, "systemctl.log");
+      const systemctlPath = path.join(binDir, "systemctl");
+
+      process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+
+      await mkdir(path.dirname(authPath), { recursive: true });
+      await mkdir(path.dirname(sessionStorePath), { recursive: true });
+      await mkdir(path.dirname(servicePath), { recursive: true });
+      await mkdir(binDir, { recursive: true });
+
+      await writeFile(
+        systemctlPath,
+        `#!/bin/sh\necho "$@" >> ${logPath}\nexit 0\n`,
+        "utf8"
+      );
+      await chmod(systemctlPath, 0o755);
+      await writeFile(servicePath, "[Service]\nExecStart=/bin/true\n", "utf8");
+
+      await writeFile(
+        authPath,
+        JSON.stringify(
+          {
+            version: 1,
+            profiles: {
+              "openai-codex:a@example.com": {
+                type: "oauth",
+                provider: "openai-codex",
+                access: "a"
+              }
+            },
+            order: {
+              "openai-codex": ["openai-codex:a@example.com"]
+            },
+            usageStats: {}
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+      await writeFile(
+        sessionStorePath,
+        JSON.stringify(
+          {
+            "agent:main:telegram:direct:1": {
+              modelProvider: "openai-codex",
+              compactionCount: 2,
+              authProfileOverride: "openai-codex:a@example.com",
+              authProfileOverrideSource: "auto",
+              authProfileOverrideCompactionCount: 2
+            }
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+
+      await syncCodexOrder(authPath, ["openai-codex:a@example.com"]);
+
+      await expect(readFile(logPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      process.env.HOME = previousHome;
+      process.env.PATH = previousPath;
     }
   });
 
@@ -386,6 +465,34 @@ describe("openclaw auth bridge", () => {
     expect(next.usageStats["openai-codex:a@example.com"]?.disabledReason).toBe("auth_permanent");
   });
 
+  it("returns false when auto codex session overrides are already aligned", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-sessions-"));
+    cleanupPaths.push(dir);
+    const sessionStorePath = path.join(dir, "sessions.json");
+
+    await writeFile(
+      sessionStorePath,
+      JSON.stringify(
+        {
+          "agent:main:telegram:direct:1": {
+            modelProvider: "openai-codex",
+            compactionCount: 2,
+            authProfileOverride: "openai-codex:raj@example.com",
+            authProfileOverrideSource: "auto",
+            authProfileOverrideCompactionCount: 2
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await expect(
+      syncAutoSessionAuthOverrides(sessionStorePath, ["openai-codex:raj@example.com"])
+    ).resolves.toBe(false);
+  });
+
   it("syncs auto codex session overrides to the first ordered profile", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "openclaw-sessions-"));
     cleanupPaths.push(dir);
@@ -421,7 +528,9 @@ describe("openclaw auth bridge", () => {
       "utf8"
     );
 
-    await syncAutoSessionAuthOverrides(sessionStorePath, ["openai-codex:raj@example.com"]);
+    await expect(
+      syncAutoSessionAuthOverrides(sessionStorePath, ["openai-codex:raj@example.com"])
+    ).resolves.toBe(true);
 
     const next = JSON.parse(await readFile(sessionStorePath, "utf8")) as Record<
       string,

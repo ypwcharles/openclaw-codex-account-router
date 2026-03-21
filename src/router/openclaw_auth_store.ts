@@ -147,8 +147,8 @@ export async function clearProfileCooldown(
 export async function syncAutoSessionAuthOverrides(
   sessionStorePath: string,
   orderedProfileIds: string[]
-): Promise<void> {
-  await updateSessionStore(sessionStorePath, (store) => {
+): Promise<boolean> {
+  return await updateSessionStore(sessionStorePath, (store) => {
     let changed = false;
     for (const value of Object.values(store)) {
       if (!value || typeof value !== "object") {
@@ -208,9 +208,15 @@ async function syncOpenClawRuntimeState(
   }
 
   const sessionStorePath = resolveDefaultOpenClawSessionStorePath();
-  if (await pathExists(sessionStorePath)) {
-    await syncAutoSessionAuthOverrides(sessionStorePath, orderedProfileIds);
+  if (!(await pathExists(sessionStorePath))) {
+    return;
   }
+
+  const changed = await syncAutoSessionAuthOverrides(sessionStorePath, orderedProfileIds);
+  if (!changed) {
+    return;
+  }
+
   await restartGatewayServiceIfActive();
 }
 
@@ -247,7 +253,7 @@ async function updateOpenClawStore<T>(
 async function updateSessionStore(
   sessionStorePath: string,
   updater: (store: Record<string, unknown>) => boolean
-): Promise<void> {
+): Promise<boolean> {
   const dir = path.dirname(sessionStorePath);
   const lockPath = path.join(dir, ".sessions.lock");
   const tempPath = `${sessionStorePath}.tmp`;
@@ -267,10 +273,11 @@ async function updateSessionStore(
     const store = await loadSessionStore(sessionStorePath);
     const changed = updater(store);
     if (!changed) {
-      return;
+      return false;
     }
     await writeFile(tempPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
     await rename(tempPath, sessionStorePath);
+    return true;
   } finally {
     await release();
   }

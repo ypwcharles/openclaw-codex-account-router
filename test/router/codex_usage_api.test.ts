@@ -45,6 +45,26 @@ describe("codex_usage_api", () => {
     expect(snapshot.cooldownUntil).toBe(1_763_666_400_000);
   });
 
+  it("does not round near-limit usage into an exhausted window", () => {
+    const snapshot = parseCodexUsageResponse(
+      JSON.stringify({
+        plan_type: "team",
+        rate_limit: {
+          primary_window: {
+            used_percent: 99.6,
+            limit_window_seconds: 18_000,
+            reset_at: 1_763_736_000
+          }
+        }
+      }),
+      { now: new Date("2026-03-21T10:00:00.000Z") }
+    );
+
+    expect(snapshot.primary?.usedPercent).toBe(99.6);
+    expect(snapshot.primary?.remainingPercent ?? 0).toBeCloseTo(0.4, 6);
+    expect(snapshot.cooldownUntil).toBeUndefined();
+  });
+
   it("uses the latest reset when multiple exhausted quota windows block the account", () => {
     const snapshot = parseCodexUsageResponse(
       JSON.stringify({
