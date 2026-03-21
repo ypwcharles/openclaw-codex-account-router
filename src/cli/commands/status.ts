@@ -63,13 +63,14 @@ export type RouterStatusPayload = {
 export async function getRouterStatus(params: {
   routerStatePath: string;
   authStorePath?: string;
+  authStoreOptional?: boolean;
   integrationStatePath?: string;
   now?: Date;
 }): Promise<RouterStatusPayload> {
   const now = params.now ?? new Date();
   const nowMs = now.getTime();
   const state = await loadRouterState(params.routerStatePath);
-  const authState = await loadOpenClawAuthStatus(params.authStorePath);
+  const authState = await loadOpenClawAuthStatus(params.authStorePath, params.authStoreOptional ?? false);
   const currentOrder = state.accounts
     .slice()
     .sort((a, b) => a.priority - b.priority)
@@ -163,7 +164,8 @@ type OpenClawAuthStatus = {
 };
 
 async function loadOpenClawAuthStatus(
-  authStorePath: string | undefined
+  authStorePath: string | undefined,
+  authStoreOptional: boolean
 ): Promise<OpenClawAuthStatus | undefined> {
   if (!authStorePath) {
     return undefined;
@@ -179,7 +181,7 @@ async function loadOpenClawAuthStatus(
       usageStats: parsed.usageStats ?? {}
     };
   } catch (error) {
-    if (isOptionalAuthStoreError(error)) {
+    if (authStoreOptional && isOptionalAuthStoreError(error)) {
       return undefined;
     }
     throw error;
@@ -555,13 +557,17 @@ export function registerStatusCommand(program: Command): void {
         ? await loadIntegrationState(integrationStatePath)
         : undefined;
 
+      const authStore = resolveStatusAuthStore({
+        explicit: opts.authStore as string | undefined,
+        integrationStateAuthStorePath: integrationState?.authStorePath
+      });
+
       const payload = await getRouterStatus({
         routerStatePath: resolveRouterStatePath(
           (opts.routerState as string | undefined) ?? integrationState?.routerStatePath
         ),
-        authStorePath: resolveOptionalStatusAuthStorePath(
-          (opts.authStore as string | undefined) ?? integrationState?.authStorePath
-        ),
+        authStorePath: authStore.path,
+        authStoreOptional: authStore.optional,
         integrationStatePath
       });
       if (opts.json) {
@@ -590,14 +596,35 @@ export function registerStatusCommand(program: Command): void {
     });
 }
 
-function resolveOptionalStatusAuthStorePath(explicit?: string): string | undefined {
-  const raw = explicit?.trim();
-  if (raw) {
-    return resolveAuthStorePath(raw);
+function resolveStatusAuthStore(params: {
+  explicit?: string;
+  integrationStateAuthStorePath?: string;
+}): { path?: string; optional: boolean } {
+  const explicit = params.explicit?.trim();
+  if (explicit) {
+    return {
+      path: resolveAuthStorePath(explicit),
+      optional: false
+    };
   }
+
+  const integrationStateAuthStorePath = params.integrationStateAuthStorePath?.trim();
+  if (integrationStateAuthStorePath) {
+    return {
+      path: resolveAuthStorePath(integrationStateAuthStorePath),
+      optional: true
+    };
+  }
+
   try {
-    return resolveAuthStorePath();
+    return {
+      path: resolveAuthStorePath(),
+      optional: true
+    };
   } catch {
-    return undefined;
+    return {
+      path: undefined,
+      optional: true
+    };
   }
 }
