@@ -36,6 +36,37 @@ export async function syncCodexOrder(
   await updateOpenClawStore(authStorePath, (store) => {
     store.order = store.order ?? {};
     store.order[OPENAI_CODEX_PROVIDER] = [...orderedProfileIds];
+    if (orderedProfileIds.length === 0) {
+      if (store.lastGood?.[OPENAI_CODEX_PROVIDER]) {
+        delete store.lastGood[OPENAI_CODEX_PROVIDER];
+      }
+      return;
+    }
+    store.lastGood = store.lastGood ?? {};
+    store.lastGood[OPENAI_CODEX_PROVIDER] = orderedProfileIds[0];
+  });
+}
+
+export async function mirrorSuccessToOpenClaw(
+  authStorePath: string,
+  params: {
+    profileId: string;
+    now: Date;
+  }
+): Promise<void> {
+  await updateOpenClawStore(authStorePath, (store) => {
+    store.lastGood = store.lastGood ?? {};
+    store.lastGood[OPENAI_CODEX_PROVIDER] = params.profileId;
+    store.usageStats = store.usageStats ?? {};
+    const existing = store.usageStats[params.profileId] ?? {};
+    store.usageStats[params.profileId] = {
+      ...existing,
+      lastUsed: params.now.getTime(),
+      cooldownUntil: undefined,
+      disabledUntil: undefined,
+      disabledReason: undefined,
+      errorCount: 0
+    };
   });
 }
 

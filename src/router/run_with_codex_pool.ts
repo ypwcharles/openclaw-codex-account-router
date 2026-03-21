@@ -1,7 +1,7 @@
 import { classifyCodexFailure } from "../classifier/codex_error_classifier.js";
 import { loadRouterState, saveRouterState } from "../account_store/store.js";
 import type { RouterAccount, RouterState } from "../account_store/types.js";
-import { mirrorFailureToOpenClaw, syncCodexOrder } from "./openclaw_auth_store.js";
+import { mirrorFailureToOpenClaw, mirrorSuccessToOpenClaw, syncCodexOrder } from "./openclaw_auth_store.js";
 import type { MirroredFailureReason } from "./openclaw_usage_mirror.js";
 import { execOpenClawCommand } from "./openclaw_exec.js";
 import type { CodexPoolRunResult, OpenClawExecResult } from "./result.js";
@@ -38,7 +38,12 @@ export async function runWithCodexPool(params: {
 
     try {
       const result = await exec(params.command, params.args);
-      markSuccess(state, current.alias, nowFn());
+      const now = nowFn();
+      markSuccess(state, current.alias, now);
+      await mirrorSuccessToOpenClaw(params.authStorePath, {
+        profileId: current.profileId,
+        now
+      });
       state.lastProviderFallbackReason = undefined;
       await saveRouterState(params.routerStatePath, state);
       return { poolExhausted: false, usedProfileIds, result };

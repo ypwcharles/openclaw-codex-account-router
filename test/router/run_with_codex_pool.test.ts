@@ -91,13 +91,19 @@ describe("runWithCodexPool", () => {
       accounts: Array<{ alias: string; cooldownUntil?: string }>;
     };
     const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
-      usageStats?: Record<string, { cooldownUntil?: number }>;
+      lastGood?: Record<string, string>;
+      usageStats?: Record<string, { cooldownUntil?: number; lastUsed?: number; errorCount?: number }>;
     };
     const routerCooldown = routerState.accounts.find((x) => x.alias === "acct-a")?.cooldownUntil;
     const mirroredCooldown = authStore.usageStats?.["openai-codex:a@example.com"]?.cooldownUntil;
     expect(routerCooldown).toBeDefined();
     expect(mirroredCooldown).toBeDefined();
     expect(new Date(routerCooldown ?? "").getTime()).toBe(mirroredCooldown);
+    expect(authStore.lastGood?.["openai-codex"]).toBe("openai-codex:b@example.com");
+    expect(authStore.usageStats?.["openai-codex:b@example.com"]?.lastUsed).toBe(
+      Date.parse("2026-03-19T12:00:00.000Z")
+    );
+    expect(authStore.usageStats?.["openai-codex:b@example.com"]?.errorCount).toBe(0);
   });
 
   it("mirrors timeout retry escalation as timeout instead of rate_limit", async () => {

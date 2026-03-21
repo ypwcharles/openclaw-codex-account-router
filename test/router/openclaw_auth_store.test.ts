@@ -6,6 +6,7 @@ import {
   clearProfileCooldown,
   clearProfileFailureState,
   mirrorFailureToOpenClaw,
+  mirrorSuccessToOpenClaw,
   syncCodexOrder
 } from "../../src/router/openclaw_auth_store.js";
 
@@ -59,6 +60,7 @@ describe("openclaw auth bridge", () => {
 
     const next = JSON.parse(await readFile(authPath, "utf8")) as {
       order: Record<string, string[]>;
+      lastGood?: Record<string, string>;
       usageStats: Record<
         string,
         {
@@ -69,8 +71,81 @@ describe("openclaw auth bridge", () => {
     };
 
     expect(next.order["openai-codex"]?.[0]).toBe("openai-codex:b@example.com");
+    expect(next.lastGood?.["openai-codex"]).toBe("openai-codex:b@example.com");
     expect(next.usageStats["openai-codex:a@example.com"]?.disabledReason).toBe("auth_permanent");
     expect(typeof next.usageStats["openai-codex:a@example.com"]?.disabledUntil).toBe("number");
+  });
+
+  it("mirrors successful codex usage into lastGood and lastUsed", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-auth-"));
+    cleanupPaths.push(dir);
+    const authPath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      authPath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "a"
+            },
+            "openai-codex:b@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "b"
+            }
+          },
+          order: {
+            "openai-codex": ["openai-codex:b@example.com", "openai-codex:a@example.com"]
+          },
+          lastGood: {
+            "openai-codex": "openai-codex:a@example.com"
+          },
+          usageStats: {
+            "openai-codex:b@example.com": {
+              cooldownUntil: 9_999_999_999_999,
+              disabledUntil: 8_888_888_888_888,
+              disabledReason: "billing",
+              errorCount: 4
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await mirrorSuccessToOpenClaw(authPath, {
+      profileId: "openai-codex:b@example.com",
+      now: new Date("2026-03-21T09:31:39.679Z")
+    });
+
+    const next = JSON.parse(await readFile(authPath, "utf8")) as {
+      lastGood?: Record<string, string>;
+      usageStats?: Record<
+        string,
+        {
+          lastUsed?: number;
+          cooldownUntil?: number;
+          disabledUntil?: number;
+          disabledReason?: string;
+          errorCount?: number;
+        }
+      >;
+    };
+
+    expect(next.lastGood?.["openai-codex"]).toBe("openai-codex:b@example.com");
+    expect(next.usageStats?.["openai-codex:b@example.com"]?.lastUsed).toBe(
+      Date.parse("2026-03-21T09:31:39.679Z")
+    );
+    expect(next.usageStats?.["openai-codex:b@example.com"]?.cooldownUntil).toBeUndefined();
+    expect(next.usageStats?.["openai-codex:b@example.com"]?.disabledUntil).toBeUndefined();
+    expect(next.usageStats?.["openai-codex:b@example.com"]?.disabledReason).toBeUndefined();
+    expect(next.usageStats?.["openai-codex:b@example.com"]?.errorCount).toBe(0);
   });
 
   it("clears mirrored cooldown and disable markers for a profile", async () => {
