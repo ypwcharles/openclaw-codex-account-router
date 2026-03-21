@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,6 +10,10 @@ import {
   syncAutoSessionAuthOverrides,
   syncCodexOrder
 } from "../../src/router/openclaw_auth_store.js";
+import {
+  resolveDefaultOpenClawAuthStorePath,
+  resolveDefaultOpenClawSessionStorePath
+} from "../../src/router/openclaw_paths.js";
 
 const cleanupPaths: string[] = [];
 
@@ -64,6 +68,60 @@ describe("openclaw auth bridge", () => {
 
     expect(next.order["openai-codex"]?.[0]).toBe("openai-codex:b@example.com");
     expect(next.lastGood?.["openai-codex"]).toBe("openai-codex:a@example.com");
+  });
+
+  it("best-effort syncs runtime state when default session store is malformed", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-auth-home-"));
+    cleanupPaths.push(dir);
+    const previousHome = process.env.HOME;
+    process.env.HOME = dir;
+
+    try {
+      const authPath = resolveDefaultOpenClawAuthStorePath();
+      const sessionStorePath = resolveDefaultOpenClawSessionStorePath();
+
+      await mkdir(path.dirname(authPath), { recursive: true });
+      await mkdir(path.dirname(sessionStorePath), { recursive: true });
+      await writeFile(
+        authPath,
+        JSON.stringify(
+          {
+            version: 1,
+            profiles: {
+              "openai-codex:a@example.com": {
+                type: "oauth",
+                provider: "openai-codex",
+                access: "a"
+              },
+              "openai-codex:b@example.com": {
+                type: "oauth",
+                provider: "openai-codex",
+                access: "b"
+              }
+            },
+            order: {
+              "openai-codex": ["openai-codex:a@example.com"]
+            },
+            usageStats: {}
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+      await writeFile(sessionStorePath, "{not valid json", "utf8");
+
+      await expect(
+        syncCodexOrder(authPath, ["openai-codex:b@example.com", "openai-codex:a@example.com"])
+      ).resolves.toBeUndefined();
+
+      const next = JSON.parse(await readFile(authPath, "utf8")) as {
+        order?: Record<string, string[]>;
+      };
+      expect(next.order?.["openai-codex"]?.[0]).toBe("openai-codex:b@example.com");
+    } finally {
+      process.env.HOME = previousHome;
+    }
   });
 
   it("writes disabled state into auth-profiles.json", async () => {
@@ -194,6 +252,42 @@ describe("openclaw auth bridge", () => {
     expect(next.usageStats?.["openai-codex:b@example.com"]?.disabledUntil).toBeUndefined();
     expect(next.usageStats?.["openai-codex:b@example.com"]?.disabledReason).toBeUndefined();
     expect(next.usageStats?.["openai-codex:b@example.com"]?.errorCount).toBe(0);
+  });
+
+  it("ignores expired cooldown override and falls back to heuristic cooldown", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-auth-"));
+    cleanupPaths.push(dir);
+    const authPath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      authPath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "a"
+            }
+          },
+          usageStats: {}
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const now = new Date("2026-03-21T10:00:00.000Z");
+    const nextStats = await mirrorFailureToOpenClaw(authPath, {
+      profileId: "openai-codex:a@example.com",
+      reason: "rate_limit",
+      now,
+      cooldownUntilMs: Date.parse("2026-03-21T09:59:00.000Z")
+    });
+
+    expect(nextStats.cooldownUntil).toBe(Date.parse("2026-03-21T10:01:00.000Z"));
   });
 
   it("clears mirrored cooldown and disable markers for a profile", async () => {

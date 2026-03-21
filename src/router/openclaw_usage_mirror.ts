@@ -88,7 +88,9 @@ export function mirrorFailureStats(params: {
   }
 
   const cooldownMs =
-    typeof params.cooldownUntilOverrideMs === "number" && Number.isFinite(params.cooldownUntilOverrideMs)
+    typeof params.cooldownUntilOverrideMs === "number" &&
+    Number.isFinite(params.cooldownUntilOverrideMs) &&
+    params.cooldownUntilOverrideMs > params.nowMs
       ? params.cooldownUntilOverrideMs
       : params.nowMs + Math.min(60 * 60 * 1000, 60 * 1000 * 5 ** Math.min(nextErrorCount - 1, 3));
   next.cooldownUntil = cooldownMs;

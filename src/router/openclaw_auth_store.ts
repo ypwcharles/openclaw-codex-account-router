@@ -42,7 +42,11 @@ export async function syncCodexOrder(
     store.order = store.order ?? {};
     store.order[OPENAI_CODEX_PROVIDER] = [...orderedProfileIds];
   });
-  await syncOpenClawRuntimeState(authStorePath, orderedProfileIds);
+  try {
+    await syncOpenClawRuntimeState(authStorePath, orderedProfileIds);
+  } catch {
+    // Best-effort only: routing should still proceed when optional runtime sync drifts.
+  }
 }
 
 export async function mirrorSuccessToOpenClaw(

@@ -51,10 +51,14 @@ export async function runWithCodexPool(params: {
       const result = await exec(params.command, params.args);
       const now = nowFn();
       markSuccess(state, current.alias, now);
-      await mirrorSuccessToOpenClaw(params.authStorePath, {
-        profileId: current.profileId,
-        now
-      });
+      try {
+        await mirrorSuccessToOpenClaw(params.authStorePath, {
+          profileId: current.profileId,
+          now
+        });
+      } catch {
+        // Best-effort only: a successful command must not be retried because mirrored auth state drifted.
+      }
       state.lastProviderFallbackReason = undefined;
       await saveRouterState(params.routerStatePath, state);
       return { poolExhausted: false, usedProfileIds, result };
