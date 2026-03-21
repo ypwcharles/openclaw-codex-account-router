@@ -13,6 +13,7 @@ export function renderOpenClawShim(params: RenderOpenClawShimParams): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
 
+SHIM_PATH="$0"
 STATE_PATH=${statePath}
 ROUTER_COMMAND=${routerCommand}
 
@@ -25,6 +26,11 @@ REAL_OPENCLAW="$(node --input-type=module -e 'import { readFileSync } from "node
 
 if [ -z "$REAL_OPENCLAW" ]; then
   echo "openclaw-router integration state missing realOpenClawPath" >&2
+  exit 1
+fi
+
+if [ "$REAL_OPENCLAW" = "$SHIM_PATH" ]; then
+  echo "openclaw-router integration state is misconfigured: realOpenClawPath points to shim ($SHIM_PATH)" >&2
   exit 1
 fi
 

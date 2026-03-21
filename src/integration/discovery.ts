@@ -1,4 +1,4 @@
-import { access, constants, readFile, realpath } from "node:fs/promises";
+import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { IntegrationPlatform } from "./types.js";
 
@@ -30,8 +30,8 @@ export async function resolveOpenClawBinaryPath(params?: {
 }): Promise<string> {
   const pathEnv = process.env.PATH ?? "";
   const pathEntries = pathEnv.split(path.delimiter).filter(Boolean);
-  const excluded = new Set(
-    (params?.excludePaths ?? []).map((item) => path.resolve(item))
+  const excludedRoots = await Promise.all(
+    (params?.excludePaths ?? []).map(async (item) => await normalizePath(item))
   );
 
   for (const dir of pathEntries) {
@@ -40,7 +40,12 @@ export async function resolveOpenClawBinaryPath(params?: {
     if (!resolved) {
       continue;
     }
-    if (excluded.has(resolved) || excluded.has(path.resolve(candidate))) {
+    const candidatePath = await normalizePath(candidate);
+    if (
+      excludedRoots.some(
+        (root) => isSamePathOrDescendant(candidatePath, root) || isSamePathOrDescendant(resolved, root)
+      )
+    ) {
       continue;
     }
     return resolved;
@@ -65,8 +70,26 @@ export async function discoverOpenClawProfiles(authStorePath: string): Promise<s
 async function resolveExecutablePath(candidate: string): Promise<string | undefined> {
   try {
     await access(candidate, constants.X_OK);
-    return await realpath(candidate).catch(() => path.resolve(candidate));
+    return await normalizePath(candidate);
   } catch {
     return undefined;
   }
+}
+
+async function normalizePath(targetPath: string): Promise<string> {
+  // Use realpath only when needed; fall back to resolve to avoid
+  // hangs on non-existent or WSL-accessible Windows paths.
+  try {
+    return await stat(targetPath).then(() => path.resolve(targetPath));
+  } catch {
+    return path.resolve(targetPath);
+  }
+}
+
+function isSamePathOrDescendant(targetPath: string, rootPath: string): boolean {
+  if (targetPath === rootPath) {
+    return true;
+  }
+  const relative = path.relative(rootPath, targetPath);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }

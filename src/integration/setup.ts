@@ -43,7 +43,7 @@ export async function runSetup(
   } = {},
   deps?: {
     discoverOpenClawProfiles?: (authStorePath: string) => Promise<string[]>;
-    resolveOpenClawBinary?: () => Promise<string>;
+    resolveOpenClawBinary?: (params?: { excludePaths?: string[] }) => Promise<string>;
     now?: () => Date;
   }
 ): Promise<SetupResult> {
