@@ -1,7 +1,53 @@
-import { describe, expect, it } from "vitest";
-import { parseCodexUsageResponse } from "../../src/router/codex_usage_api.js";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  fetchCodexUsageSnapshot,
+  parseCodexUsageResponse
+} from "../../src/router/codex_usage_api.js";
+
+const cleanupPaths: string[] = [];
+
+afterEach(async () => {
+  const { rm } = await import("node:fs/promises");
+  await Promise.all(cleanupPaths.splice(0).map((p) => rm(p, { recursive: true, force: true })));
+});
 
 describe("codex_usage_api", () => {
+  it("times out bounded usage fetches so cooldown routing can fall back", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "codex-usage-auth-"));
+    cleanupPaths.push(dir);
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              provider: "openai-codex",
+              access: "token-a"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await expect(
+      fetchCodexUsageSnapshot({
+        authStorePath,
+        profileId: "openai-codex:a@example.com",
+        timeoutMs: 10,
+        fetchImpl: async () => await new Promise<never>(() => {})
+      })
+    ).rejects.toThrow("codex usage api timed out after 10ms");
+  });
+
   it("parses quota windows and derives reset times", () => {
     const snapshot = parseCodexUsageResponse(
       JSON.stringify({

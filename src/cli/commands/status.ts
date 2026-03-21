@@ -179,7 +179,7 @@ async function loadOpenClawAuthStatus(
       usageStats: parsed.usageStats ?? {}
     };
   } catch (error) {
-    if (isFileNotFound(error)) {
+    if (isFileNotFound(error) || isMalformedJson(error)) {
       return undefined;
     }
     throw error;
@@ -488,6 +488,10 @@ function isFileNotFound(error: unknown): boolean {
       "code" in error &&
       (error as { code?: unknown }).code === "ENOENT"
   );
+}
+
+function isMalformedJson(error: unknown): boolean {
+  return error instanceof SyntaxError;
 }
 
 async function resolveIntegrationStatus(

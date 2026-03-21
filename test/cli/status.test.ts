@@ -311,6 +311,71 @@ describe("status cli", () => {
     expect(payload.accounts.find((account) => account.alias === "acct-b")?.selected).toBe(true);
   });
 
+  it("falls back to router-only status when auth store is malformed", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "status-cli-bad-auth-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:a@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(authStorePath, "{broken json", "utf8");
+
+    const { stdout } = await execa(
+      "node",
+      [
+        "--import",
+        "tsx",
+        "src/cli/main.ts",
+        "status",
+        "--router-state",
+        routerStatePath,
+        "--auth-store",
+        authStorePath,
+        "--json"
+      ],
+      { cwd: repoRoot }
+    );
+
+    const payload = JSON.parse(stdout) as {
+      currentOrder: string[];
+      nextCandidate?: string;
+      authLastGoodProfileId?: string;
+      cooldowns: Array<{ alias: string; until?: string }>;
+      accounts: Array<{ alias: string; effectiveStatus: string; selected: boolean }>;
+    };
+
+    expect(payload.currentOrder).toEqual(["acct-a"]);
+    expect(payload.nextCandidate).toBe("acct-a");
+    expect(payload.authLastGoodProfileId).toBeUndefined();
+    expect(payload.cooldowns).toEqual([]);
+    expect(payload.accounts).toHaveLength(1);
+    expect(payload.accounts[0]).toMatchObject({
+      alias: "acct-a",
+      effectiveStatus: "healthy",
+      selected: true
+    });
+  });
+
   it("auto-loads default integration state from HOME when option is omitted", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "status-default-intg-"));
     cleanupPaths.push(dir);

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const USAGE_FETCH_TIMEOUT_MS = 5_000;
 const OPENAI_AUTH_CLAIM_PATH = "https://api.openai.com/auth";
 const OPENAI_CHATGPT_ACCOUNT_ID_CLAIM = "https://api.openai.com/auth.chatgpt_account_id";
 
@@ -45,6 +46,7 @@ type FetchLike = (
   init?: {
     method?: string;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
   }
 ) => Promise<FetchLikeResponse>;
 
@@ -53,6 +55,7 @@ export async function fetchCodexUsageSnapshot(params: {
   profileId: string;
   now?: Date;
   fetchImpl?: FetchLike;
+  timeoutMs?: number;
 }): Promise<CodexQuotaSnapshot | undefined> {
   const now = params.now ?? new Date();
   const fetchImpl = params.fetchImpl ?? (globalThis.fetch as FetchLike | undefined);
@@ -74,9 +77,18 @@ export async function fetchCodexUsageSnapshot(params: {
     headers["ChatGPT-Account-Id"] = accountId;
   }
 
-  const response = await fetchImpl(USAGE_URL, {
-    method: "GET",
-    headers
+  const timeoutMs = params.timeoutMs ?? USAGE_FETCH_TIMEOUT_MS;
+  const controller = typeof AbortController === "function" ? new AbortController() : undefined;
+  const response = await fetchWithTimeout({
+    fetchImpl,
+    url: USAGE_URL,
+    init: {
+      method: "GET",
+      headers,
+      signal: controller?.signal
+    },
+    timeoutMs,
+    onTimeout: () => controller?.abort()
   });
   const body = await response.text();
   if (!response.ok) {
@@ -152,6 +164,40 @@ function parseUsageWindow(
     windowMinutes,
     resetAt
   };
+}
+
+async function fetchWithTimeout(params: {
+  fetchImpl: FetchLike;
+  url: string;
+  init: {
+    method?: string;
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+  };
+  timeoutMs: number;
+  onTimeout?: () => void;
+}): Promise<FetchLikeResponse> {
+  const timeoutMs = Math.max(0, params.timeoutMs);
+  if (timeoutMs === 0) {
+    return await params.fetchImpl(params.url, params.init);
+  }
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      params.fetchImpl(params.url, params.init),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          params.onTimeout?.();
+          reject(new Error(`codex usage api timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutHandle !== undefined) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 function normalizePercent(value: unknown): number | undefined {
