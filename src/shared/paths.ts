@@ -8,7 +8,14 @@ export function resolveRouterStatePath(explicit?: string): string {
   if (raw) {
     return path.resolve(raw);
   }
-  return path.resolve(process.cwd(), "config", "accounts.json");
+
+  try {
+    const homeDir = resolveHomeDir();
+    const platform = detectIntegrationPlatform();
+    return path.join(resolveIntegrationPaths(homeDir, platform).installRoot, "router-state.json");
+  } catch {
+    return path.resolve(process.cwd(), "config", "accounts.json");
+  }
 }
 
 export function resolveAuthStorePath(explicit?: string): string {

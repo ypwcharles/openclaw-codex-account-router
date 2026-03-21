@@ -34,4 +34,15 @@ describe("openclaw shim", () => {
     expect(text).toContain('if [ "$REAL_OPENCLAW" = "$SHIM_PATH" ]; then');
     expect(text).toContain("misconfigured: realOpenClawPath points to shim");
   });
+
+  it("routes interactive and maintenance commands through openclaw-router run", () => {
+    const text = renderOpenClawShim({
+      routerCommand: "/Users/tester/.openclaw-router/bin/openclaw-router",
+      integrationStatePath: "/Users/tester/.openclaw-router/integration.json"
+    });
+
+    expect(text).not.toContain('case "${1:-}" in');
+    expect(text).not.toContain("tui|update|--update");
+    expect(text).toContain('exec "$ROUTER_COMMAND" run --integration-state "$STATE_PATH" -- "$REAL_OPENCLAW" "$@"');
+  });
 });

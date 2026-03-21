@@ -7,6 +7,7 @@
 This project now supports an install/repair model:
 
 - `openclaw-router auth login` wraps Codex OAuth login so repeated logins do not collapse into `openai-codex:default`
+- `auth login` and `auth normalize` automatically add newly normalized Codex profiles into the router pool
 - `openclaw-router setup` installs managed artifacts under `~/.openclaw-router`
 - `setup` also snapshots OpenClaw auth store before router mutation
 - a managed `openclaw` shim forwards plain `openclaw ...` calls into router logic
@@ -55,7 +56,7 @@ node --import tsx src/cli/main.ts setup --json
 ```
 
 For Codex OAuth accounts, prefer `openclaw-router auth login` over raw `openclaw models auth login --provider openai-codex`.
-The wrapper immediately normalizes `openai-codex:default` into `openai-codex:<email>` so repeated logins do not overwrite earlier accounts.
+The wrapper immediately normalizes `openai-codex:default` into `openai-codex:<email>` so repeated logins do not overwrite earlier accounts, then binds any newly discovered Codex profiles into the router account pool.
 
 Plain `setup` output also prints:
 
@@ -95,7 +96,8 @@ Top-level user commands:
 
 ```bash
 openclaw-router setup [--home-dir <path>] [--platform darwin|linux] [--auth-store <path>] [--router-state <path>] [--integration-state <path>] [--json]
-openclaw-router auth login [--auth-store <path>] [--json]
+openclaw-router auth login [--auth-store <path>] [--integration-state <path>] [--json]
+openclaw-router auth normalize [--auth-store <path>] [--integration-state <path>] [--json]
 openclaw-router status [--router-state <path>] [--integration-state <path>] [--json]
 openclaw-router doctor [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json]
 openclaw-router run [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json] [commandArgs...]
@@ -111,8 +113,9 @@ openclaw-router account order <aliases...>
 Recommended user flow:
 
 1. Use `openclaw-router auth login` once per ChatGPT / Codex account you want in the pool.
-2. Run `openclaw-router setup` once after the accounts are present.
-3. Use plain `openclaw ...` after the shim is installed.
+2. If you authenticated with raw `openclaw` instead, run `openclaw-router auth normalize` to normalize and bind those Codex profiles into the router pool.
+3. Run `openclaw-router setup` once after the accounts are present.
+4. Use plain `openclaw ...` after the shim is installed.
 
 Compatibility commands are still available:
 

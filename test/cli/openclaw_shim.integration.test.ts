@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { execa } from "execa";
 import { fileURLToPath } from "node:url";
 import { runSetup } from "../../src/integration/setup.js";
+import { installOpenClawShim } from "../../src/integration/shim.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const cleanupPaths: string[] = [];
@@ -88,4 +89,71 @@ describe("openclaw shim integration", () => {
     },
     15000
   );
+
+  it("routes tui and normal commands through openclaw-router run", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-shim-routed-"));
+    cleanupPaths.push(dir);
+
+    const integrationStatePath = path.join(dir, "integration.json");
+    const shimPath = path.join(dir, "bin", "openclaw");
+    const routerCommand = path.join(dir, "bin", "openclaw-router");
+    const realOpenClawPath = path.join(dir, "bin", "openclaw-real");
+    const routerInvocationsPath = path.join(dir, "router-invocations.log");
+
+    await mkdir(path.dirname(realOpenClawPath), { recursive: true });
+    await writeFile(
+      realOpenClawPath,
+      "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n",
+      "utf8"
+    );
+    await chmod(realOpenClawPath, 0o755);
+
+    await writeFile(
+      routerCommand,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf 'router:%s\\n' "$*" >> ${JSON.stringify(routerInvocationsPath)}
+exit 88
+`,
+      "utf8"
+    );
+    await chmod(routerCommand, 0o755);
+
+    await writeFile(
+      integrationStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          platform: "linux",
+          installRoot: dir,
+          shimPath,
+          realOpenClawPath,
+          servicePath: path.join(dir, "service"),
+          lastSetupAt: "2026-03-21T00:00:00.000Z",
+          routerStatePath: path.join(dir, "router-state.json"),
+          authStorePath: path.join(dir, "auth-profiles.json"),
+          authStoreBackupPath: path.join(dir, "auth-profiles.backup.json")
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await installOpenClawShim({
+      shimPath,
+      routerCommand,
+      integrationStatePath
+    });
+
+    const tuiResult = await execa(shimPath, ["tui"], { reject: false });
+    expect(tuiResult.exitCode).toBe(88);
+
+    const routedResult = await execa(shimPath, ["agent", "--message", "ping"], { reject: false });
+    expect(routedResult.exitCode).toBe(88);
+    const routerInvocations = await readFile(routerInvocationsPath, "utf8");
+    expect(routerInvocations).toContain("router:run --integration-state");
+    expect(routerInvocations).toContain("tui");
+    expect(routerInvocations).toContain("agent --message ping");
+  });
 });

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runCodexAuthLogin } from "../../src/cli/commands/auth.js";
+import { runCodexAuthLogin, runCodexAuthNormalize } from "../../src/cli/commands/auth.js";
 
 const cleanupPaths: string[] = [];
 
@@ -220,5 +220,96 @@ describe("auth login wrapper", () => {
     expect(authStore.order?.["openai-codex"]).toEqual(["openai-codex:first@example.com"]);
     expect(authStore.usageStats?.["openai-codex:first@example.com"]?.cooldownUntil).toBe(67890);
     expect(authStore.usageStats?.["openai-codex:default"]).toBeUndefined();
+  });
+
+  it("adds a token-endpoint diagnosis when openai-codex login fails", async () => {
+    const execOpenClawLogin = vi.fn().mockRejectedValue(new Error("openclaw login failed with status 1"));
+
+    await expect(
+      runCodexAuthLogin(
+        {
+          authStorePath: "/tmp/unused-auth-store.json",
+          command: "openclaw",
+          args: ["models", "auth", "login", "--provider", "openai-codex"]
+        },
+        {
+          execOpenClawLogin,
+          probeOpenAIOAuthToken: async () => ({
+            status: "reachable",
+            httpStatus: 401
+          })
+        }
+      )
+    ).rejects.toThrow(/auth\.openai\.com\/oauth\/token is reachable \(HTTP 401/);
+  });
+
+  it("reports token-endpoint network errors when diagnosis probe fails", async () => {
+    const execOpenClawLogin = vi.fn().mockRejectedValue(new Error("openclaw login failed with status 1"));
+
+    await expect(
+      runCodexAuthLogin(
+        {
+          authStorePath: "/tmp/unused-auth-store.json",
+          command: "openclaw",
+          args: ["models", "auth", "login", "--provider", "openai-codex"]
+        },
+        {
+          execOpenClawLogin,
+          probeOpenAIOAuthToken: async () => ({
+            status: "network_error",
+            code: "ECONNRESET",
+            message: "socket hang up"
+          })
+        }
+      )
+    ).rejects.toThrow(/Cause: ECONNRESET \(socket hang up\)/);
+  });
+
+  it("normalizes an existing default codex profile without rerunning oauth login", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "auth-normalize-wrapper-"));
+    cleanupPaths.push(dir);
+
+    const authStorePath = path.join(dir, "auth-profiles.json");
+    await mkdir(path.dirname(authStorePath), { recursive: true });
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:default": {
+              provider: "openai-codex",
+              access: buildAccessTokenWithEmail("normalized@example.com"),
+              refresh: "refresh-token"
+            }
+          },
+          order: {
+            "openai-codex": ["openai-codex:default"]
+          },
+          usageStats: {
+            "openai-codex:default": {
+              cooldownUntil: 12345
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const result = await runCodexAuthNormalize({ authStorePath });
+    expect(result.migratedProfileIds).toEqual(["openai-codex:normalized@example.com"]);
+
+    const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      profiles: Record<string, { refresh?: string }>;
+      order?: Record<string, string[]>;
+      usageStats?: Record<string, { cooldownUntil?: number }>;
+    };
+
+    expect(Object.keys(authStore.profiles)).toEqual(["openai-codex:normalized@example.com"]);
+    expect(authStore.profiles["openai-codex:normalized@example.com"]?.refresh).toBe("refresh-token");
+    expect(authStore.order?.["openai-codex"]).toEqual(["openai-codex:normalized@example.com"]);
+    expect(authStore.usageStats?.["openai-codex:normalized@example.com"]?.cooldownUntil).toBe(12345);
   });
 });
