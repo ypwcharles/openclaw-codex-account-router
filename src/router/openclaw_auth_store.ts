@@ -41,14 +41,6 @@ export async function syncCodexOrder(
   await updateOpenClawStore(authStorePath, (store) => {
     store.order = store.order ?? {};
     store.order[OPENAI_CODEX_PROVIDER] = [...orderedProfileIds];
-    if (orderedProfileIds.length === 0) {
-      if (store.lastGood?.[OPENAI_CODEX_PROVIDER]) {
-        delete store.lastGood[OPENAI_CODEX_PROVIDER];
-      }
-      return;
-    }
-    store.lastGood = store.lastGood ?? {};
-    store.lastGood[OPENAI_CODEX_PROVIDER] = orderedProfileIds[0];
   });
   await syncOpenClawRuntimeState(authStorePath, orderedProfileIds);
 }

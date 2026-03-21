@@ -221,7 +221,7 @@ function resolveCooldownUntil(params: {
     .map((window) => window.resetAt)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   if (exhausted.length > 0) {
-    return Math.min(...exhausted);
+    return Math.max(...exhausted);
   }
 
   if (!params.limitReached) {

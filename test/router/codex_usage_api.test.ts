@@ -44,4 +44,30 @@ describe("codex_usage_api", () => {
     });
     expect(snapshot.cooldownUntil).toBe(1_763_666_400_000);
   });
+
+  it("uses the latest reset when multiple exhausted quota windows block the account", () => {
+    const snapshot = parseCodexUsageResponse(
+      JSON.stringify({
+        plan_type: "team",
+        rate_limit: {
+          limit_reached: true,
+          primary_window: {
+            used_percent: 100,
+            limit_window_seconds: 18_000,
+            reset_at: 1_763_736_000
+          },
+          secondary_window: {
+            used_percent: 100,
+            limit_window_seconds: 604_800,
+            reset_at: 1_764_156_400
+          }
+        }
+      }),
+      { now: new Date("2026-03-21T10:00:00.000Z") }
+    );
+
+    expect(snapshot.primary?.remainingPercent).toBe(0);
+    expect(snapshot.secondary?.remainingPercent).toBe(0);
+    expect(snapshot.cooldownUntil).toBe(1_764_156_400_000);
+  });
 });

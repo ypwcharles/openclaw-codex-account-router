@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 describe("openclaw auth bridge", () => {
-  it("writes explicit order and disabled state into auth-profiles.json", async () => {
+  it("writes explicit order without overwriting lastGood", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "openclaw-auth-"));
     cleanupPaths.push(dir);
     const authPath = path.join(dir, "auth-profiles.json");
@@ -44,6 +44,9 @@ describe("openclaw auth bridge", () => {
           order: {
             "openai-codex": ["openai-codex:a@example.com", "openai-codex:b@example.com"]
           },
+          lastGood: {
+            "openai-codex": "openai-codex:a@example.com"
+          },
           usageStats: {}
         },
         null,
@@ -53,6 +56,52 @@ describe("openclaw auth bridge", () => {
     );
 
     await syncCodexOrder(authPath, ["openai-codex:b@example.com", "openai-codex:a@example.com"]);
+
+    const next = JSON.parse(await readFile(authPath, "utf8")) as {
+      order: Record<string, string[]>;
+      lastGood?: Record<string, string>;
+    };
+
+    expect(next.order["openai-codex"]?.[0]).toBe("openai-codex:b@example.com");
+    expect(next.lastGood?.["openai-codex"]).toBe("openai-codex:a@example.com");
+  });
+
+  it("writes disabled state into auth-profiles.json", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-auth-"));
+    cleanupPaths.push(dir);
+    const authPath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      authPath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "a"
+            },
+            "openai-codex:b@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "b"
+            }
+          },
+          order: {
+            "openai-codex": ["openai-codex:b@example.com", "openai-codex:a@example.com"]
+          },
+          lastGood: {
+            "openai-codex": "openai-codex:b@example.com"
+          },
+          usageStats: {}
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
     await mirrorFailureToOpenClaw(authPath, {
       profileId: "openai-codex:a@example.com",
       reason: "auth_permanent",
@@ -60,7 +109,6 @@ describe("openclaw auth bridge", () => {
     });
 
     const next = JSON.parse(await readFile(authPath, "utf8")) as {
-      order: Record<string, string[]>;
       lastGood?: Record<string, string>;
       usageStats: Record<
         string,
@@ -71,7 +119,6 @@ describe("openclaw auth bridge", () => {
       >;
     };
 
-    expect(next.order["openai-codex"]?.[0]).toBe("openai-codex:b@example.com");
     expect(next.lastGood?.["openai-codex"]).toBe("openai-codex:b@example.com");
     expect(next.usageStats["openai-codex:a@example.com"]?.disabledReason).toBe("auth_permanent");
     expect(typeof next.usageStats["openai-codex:a@example.com"]?.disabledUntil).toBe("number");
