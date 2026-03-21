@@ -68,13 +68,10 @@ export function registerAuthCommand(program: Command): void {
     .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
-      const integrationState = await loadOptionalIntegrationState(
-        opts.integrationState as string | undefined
-      );
-      const authStorePath = resolveAuthStorePath(
-        ((opts.authStore as string | undefined) ?? integrationState?.authStorePath) as string | undefined
-      );
-      const routerStatePath = resolveRouterStatePath(integrationState?.routerStatePath);
+      const { routerStatePath, authStorePath } = await resolveAuthCommandState({
+        authStore: opts.authStore as string | undefined,
+        integrationState: opts.integrationState as string | undefined
+      });
       const result = await runCodexAuthLogin({
         authStorePath,
         command: await resolveAuthLoginCommand(opts.integrationState as string | undefined),
@@ -108,13 +105,10 @@ export function registerAuthCommand(program: Command): void {
     .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
-      const integrationState = await loadOptionalIntegrationState(
-        opts.integrationState as string | undefined
-      );
-      const authStorePath = resolveAuthStorePath(
-        ((opts.authStore as string | undefined) ?? integrationState?.authStorePath) as string | undefined
-      );
-      const routerStatePath = resolveRouterStatePath(integrationState?.routerStatePath);
+      const { routerStatePath, authStorePath } = await resolveAuthCommandState({
+        authStore: opts.authStore as string | undefined,
+        integrationState: opts.integrationState as string | undefined
+      });
       const result = await runCodexAuthNormalize({
         authStorePath
       });
@@ -268,4 +262,20 @@ async function loadOptionalIntegrationState(
   } catch {
     return undefined;
   }
+}
+
+async function resolveAuthCommandState(params?: {
+  authStore?: string;
+  integrationState?: string;
+}): Promise<{
+  routerStatePath: string;
+  authStorePath: string;
+}> {
+  const integrationState = await loadOptionalIntegrationState(params?.integrationState);
+  return {
+    routerStatePath: resolveRouterStatePath(integrationState?.routerStatePath),
+    authStorePath: resolveAuthStorePath(
+      ((params?.authStore as string | undefined) ?? integrationState?.authStorePath) as string | undefined
+    )
+  };
 }
