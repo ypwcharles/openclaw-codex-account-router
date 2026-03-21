@@ -65,27 +65,40 @@ Do not break these:
 - Shimmed `openclaw ...` must preserve original CLI args and route through `run`.
 - `setup` must preserve a restore snapshot of OpenClaw auth store.
 
+## Action norms
+
+Convert hard-won debugging lessons into default engineering behavior:
+
+- Reuse upstream OpenClaw auth flows whenever possible. The router should prefer post-login normalization and account binding over re-implementing OAuth.
+- When CLI path flags are omitted, resolve state from persisted integration state first, then installed defaults under `~/.openclaw-router`, and only use ad hoc cwd-based fallbacks as a last resort.
+- Treat path comparisons as filesystem identity checks, not string checks. Canonicalize existing paths with `realpath()` before exclusion or equality logic.
+- Treat executable discovery as file discovery. A PATH candidate is only valid if it is a regular file and executable.
+- Keep shim scope narrow, but preserve routing invariants. Do not bypass shimmed commands around `run` if that would skip Codex-pool selection, cooldown bookkeeping, or OpenClaw usage mirroring.
+- Every shim must defend against self-recursion explicitly, even if setup logic is supposed to prevent it.
+- When a command reads or writes router state, auth store, or integration state, make the source of truth obvious and consistent across commands.
+
 ## Command surface
 
 Primary user-facing CLI:
 
 - `setup [--home-dir <path>] [--platform <darwin|linux>] [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json]`
-- `auth login [--auth-store <path>] [--json]`
+- `auth login [--auth-store <path>] [--integration-state <path>] [--json]`
+- `auth normalize [--auth-store <path>] [--integration-state <path>] [--json]`
 - `status [--router-state <path>] [--integration-state <path>] [--json]`
 - `doctor [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json]`
 - `run [--router-state <path>] [--auth-store <path>] [--integration-state <path>] [--json] [commandArgs...]`
 - `repair [--integration-state <path>] [--json]`
 - `restore [--integration-state <path>] [--auth-store <path>] [--json]`
-- `account list`
-- `account add --profile-id <id> [--alias <alias>] [--priority <n>] [--force-default]`
-- `account enable <alias>`
-- `account disable <alias>`
-- `account order <aliases...>`
+- `account list [--router-state <path>] [--integration-state <path>]`
+- `account add --profile-id <id> [--alias <alias>] [--priority <n>] [--force-default] [--router-state <path>] [--auth-store <path>] [--integration-state <path>]`
+- `account enable <alias> [--router-state <path>] [--auth-store <path>] [--integration-state <path>]`
+- `account disable <alias> [--router-state <path>] [--auth-store <path>] [--integration-state <path>]`
+- `account order <aliases...> [--router-state <path>] [--auth-store <path>] [--integration-state <path>]`
 
 Compatibility commands still supported:
 
-- `accounts bind/list/enable/disable/order set`
-- `cooldown clear <alias>`
+- `accounts bind/list/enable/disable/order set [--integration-state <path>]`
+- `cooldown clear <alias> [--router-state <path>] [--auth-store <path>] [--integration-state <path>]`
 
 Keep docs and tests aligned if this changes.
 
@@ -105,6 +118,8 @@ Extra rules:
 - Runtime CLI changes should keep at least one real-process integration test.
 - Acceptance behavior belongs in `test/acceptance/requirements.test.ts`.
 - Avoid mock-only confidence for pool exhaustion and fallback logic.
+- Path-resolution changes should include at least one test that runs from a non-repo cwd or installed-home layout.
+- Binary discovery or shim exclusion changes should include at least one symlink-path regression test.
 
 ## Validation gate
 
