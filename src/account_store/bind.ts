@@ -9,6 +9,7 @@ import {
   syncCodexOrder
 } from "../router/openclaw_auth_store.js";
 import { fetchCodexUsageSnapshot, type CodexQuotaSnapshot } from "../router/codex_usage_api.js";
+import { selectEligibleAccounts } from "../router/select_account.js";
 
 type OpenClawAuthProfile = {
   provider?: string;
@@ -65,54 +66,58 @@ export async function bindAccount(
   const state = await loadRouterState(params.routerStatePath);
   const existing = state.accounts.find((account) => account.alias === alias);
   const priority = params.priority ?? existing?.priority ?? resolveNextPriority(state.accounts);
+  const sameProfile = existing?.profileId === profileId;
 
   const account: RouterAccount = {
     alias,
     profileId,
     provider: "openai-codex",
     priority,
-    status: existing?.status ?? "unknown",
+    status: sameProfile ? (existing?.status ?? "unknown") : "unknown",
     enabled: existing?.enabled ?? true,
-    lastSuccessAt: existing?.lastSuccessAt,
-    lastFailureAt: existing?.lastFailureAt,
-    lastErrorCode: existing?.lastErrorCode,
-    cooldownUntil: existing?.cooldownUntil
+    lastSuccessAt: sameProfile ? existing?.lastSuccessAt : undefined,
+    lastFailureAt: sameProfile ? existing?.lastFailureAt : undefined,
+    lastErrorCode: sameProfile ? existing?.lastErrorCode : undefined,
+    cooldownUntil: sameProfile ? existing?.cooldownUntil : undefined
   };
   if (isDefaultProfile) {
     account.defaultProfileFingerprint = resolveProfileFingerprint(profile);
   }
 
+  const fetchCodexUsage =
+    deps?.fetchCodexUsage ??
+    (async ({ authStorePath, profileId, now }) =>
+      await fetchCodexUsageSnapshot({ authStorePath, profileId, now }));
+  const hydration = await hydrateBoundAccount({
+    account,
+    sameProfile,
+    authStorePath: params.authStorePath,
+    fetchCodexUsage
+  });
+  const finalAccount = hydration.account;
+
   const nextAccounts = state.accounts
     .filter((item) => item.alias !== alias)
-    .concat(account)
+    .concat(finalAccount)
     .sort((a, b) => a.priority - b.priority);
   const nextState: RouterState = {
     ...state,
     accounts: nextAccounts
   };
   await saveRouterState(params.routerStatePath, nextState);
+  if (hydration.snapshot) {
+    await mirrorQuotaSnapshotToOpenClaw(params.authStorePath, {
+      profileId: finalAccount.profileId,
+      snapshot: hydration.snapshot,
+      now: hydration.now
+    });
+  }
   await syncCodexOrder(
     params.authStorePath,
-    nextAccounts
-      .filter((item) => item.enabled)
-      .sort((a, b) => a.priority - b.priority)
-      .map((item) => item.profileId)
+    resolveRoutableProfileOrder(nextAccounts, hydration.now)
   );
 
-  const fetchCodexUsage =
-    deps?.fetchCodexUsage ??
-    (async ({ authStorePath, profileId, now }) =>
-      await fetchCodexUsageSnapshot({ authStorePath, profileId, now }));
-  const hydrated = await hydrateBoundAccountState({
-    existingStatus: existing?.status,
-    alias,
-    profileId,
-    routerStatePath: params.routerStatePath,
-    authStorePath: params.authStorePath,
-    fetchCodexUsage
-  });
-
-  return { account: hydrated?.account ?? account, state: hydrated?.state ?? nextState };
+  return { account: finalAccount, state: nextState };
 }
 
 export async function listAccounts(routerStatePath: string): Promise<RouterAccount[]> {
@@ -203,68 +208,68 @@ export async function setAccountOrderByAlias(params: {
   return nextState;
 }
 
-async function hydrateBoundAccountState(params: {
-  existingStatus?: RouterAccount["status"];
-  alias: string;
-  profileId: string;
-  routerStatePath: string;
+async function hydrateBoundAccount(params: {
+  account: RouterAccount;
+  sameProfile: boolean;
   authStorePath: string;
   fetchCodexUsage: (params: {
     authStorePath: string;
     profileId: string;
     now: Date;
   }) => Promise<CodexQuotaSnapshot | undefined>;
-}): Promise<{ account: RouterAccount; state: RouterState } | undefined> {
-  if (params.existingStatus && params.existingStatus !== "unknown") {
-    return undefined;
+}): Promise<{ account: RouterAccount; snapshot?: CodexQuotaSnapshot; now: Date }> {
+  const now = new Date();
+  if (params.sameProfile && params.account.status !== "unknown") {
+    return {
+      account: params.account,
+      now
+    };
   }
 
-  const now = new Date();
   let snapshot: CodexQuotaSnapshot | undefined;
   try {
     snapshot = await params.fetchCodexUsage({
       authStorePath: params.authStorePath,
-      profileId: params.profileId,
+      profileId: params.account.profileId,
       now
     });
   } catch {
-    return undefined;
+    return {
+      account: params.account,
+      now
+    };
   }
 
   if (!snapshot) {
-    return undefined;
-  }
-
-  await mirrorQuotaSnapshotToOpenClaw(params.authStorePath, {
-    profileId: params.profileId,
-    snapshot,
-    now
-  });
-
-  const state = await loadRouterState(params.routerStatePath);
-  const index = state.accounts.findIndex((item) => item.alias === params.alias);
-  if (index < 0) {
-    return undefined;
-  }
-
-  const current = state.accounts[index];
-  if (current.status !== "unknown") {
-    return { account: current, state };
+    return {
+      account: params.account,
+      now
+    };
   }
 
   const cooldownMs =
-    typeof snapshot.cooldownUntil === "number" && Number.isFinite(snapshot.cooldownUntil) && snapshot.cooldownUntil > now.getTime()
+    typeof snapshot.cooldownUntil === "number" &&
+    Number.isFinite(snapshot.cooldownUntil) &&
+    snapshot.cooldownUntil > now.getTime()
       ? snapshot.cooldownUntil
       : undefined;
-  const next: RouterAccount = {
-    ...current,
-    status: cooldownMs !== undefined ? "cooldown" : "healthy",
-    cooldownUntil: cooldownMs !== undefined ? new Date(cooldownMs).toISOString() : undefined,
-    lastErrorCode: cooldownMs !== undefined ? "rate_limit" : undefined
+
+  return {
+    account: {
+      ...params.account,
+      status: cooldownMs !== undefined ? "cooldown" : "healthy",
+      cooldownUntil: cooldownMs !== undefined ? new Date(cooldownMs).toISOString() : undefined,
+      lastErrorCode: cooldownMs !== undefined ? "rate_limit" : undefined,
+      lastSuccessAt: cooldownMs !== undefined ? undefined : params.account.lastSuccessAt,
+      lastFailureAt: cooldownMs !== undefined ? now.toISOString() : params.account.lastFailureAt
+    },
+    snapshot,
+    now
   };
-  state.accounts[index] = next;
-  await saveRouterState(params.routerStatePath, state);
-  return { account: next, state };
+}
+
+function resolveRoutableProfileOrder(accounts: RouterAccount[], now: Date): string[] {
+  return selectEligibleAccounts(accounts, now).map((account) => account.profileId);
 }
 
 export async function clearAccountCooldown(params: {

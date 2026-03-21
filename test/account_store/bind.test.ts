@@ -194,12 +194,220 @@ describe("bind account", () => {
     expect(result.account.cooldownUntil).toBe("2026-03-21T17:00:00.000Z");
 
     const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      order?: Record<string, string[]>;
       usageStats?: Record<string, { cooldownUntil?: number; quota?: { limitReached?: boolean } }>;
     };
     expect(authStore.usageStats?.["openai-codex:user@example.com"]?.cooldownUntil).toBe(
       Date.parse("2026-03-21T17:00:00.000Z")
     );
     expect(authStore.usageStats?.["openai-codex:user@example.com"]?.quota?.limitReached).toBe(true);
+    expect(authStore.order?.["openai-codex"] ?? []).not.toContain("openai-codex:user@example.com");
+  });
+
+  it("keeps exhausted newly bound profiles out of synced order when other routable accounts exist", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "bind-account-order-after-hydration-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-b",
+              profileId: "openai-codex:b@example.com",
+              provider: "openai-codex",
+              priority: 20,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "token-a",
+              refresh: "refresh-a"
+            },
+            "openai-codex:b@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "token-b",
+              refresh: "refresh-b"
+            }
+          },
+          order: {},
+          usageStats: {}
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const result = await bindAccount(
+      {
+        alias: "acct-a",
+        profileId: "openai-codex:a@example.com",
+        routerStatePath,
+        authStorePath,
+        priority: 10
+      },
+      {
+        fetchCodexUsage: async ({ profileId }) =>
+          profileId === "openai-codex:a@example.com"
+            ? {
+                source: "usage_api",
+                fetchedAt: Date.parse("2026-03-21T12:00:00.000Z"),
+                planType: "team",
+                limitReached: true,
+                primary: {
+                  usedPercent: 100,
+                  remainingPercent: 0,
+                  windowMinutes: 300,
+                  resetAt: Date.parse("2026-03-21T17:00:00.000Z")
+                },
+                cooldownUntil: Date.parse("2026-03-21T17:00:00.000Z")
+              }
+            : undefined
+      }
+    );
+
+    expect(result.account.status).toBe("cooldown");
+
+    const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+      order?: Record<string, string[]>;
+    };
+    expect(authStore.order?.["openai-codex"]).toEqual(["openai-codex:b@example.com"]);
+  });
+
+  it("rebinds to a different profile without inheriting stale healthy state", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "bind-account-rebind-profile-change-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:old@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "healthy",
+              enabled: true,
+              lastSuccessAt: "2026-03-21T08:00:00.000Z"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:old@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "token-old",
+              refresh: "refresh-old"
+            },
+            "openai-codex:new@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "token-new",
+              refresh: "refresh-new"
+            }
+          },
+          order: {},
+          usageStats: {}
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const result = await bindAccount(
+      {
+        alias: "acct-a",
+        profileId: "openai-codex:new@example.com",
+        routerStatePath,
+        authStorePath
+      },
+      {
+        fetchCodexUsage: async ({ profileId }) => {
+          if (profileId !== "openai-codex:new@example.com") {
+            throw new Error(`unexpected profile ${profileId}`);
+          }
+          return {
+            source: "usage_api",
+            fetchedAt: Date.parse("2026-03-21T12:00:00.000Z"),
+            planType: "team",
+            limitReached: true,
+            primary: {
+              usedPercent: 100,
+              remainingPercent: 0,
+              windowMinutes: 300,
+              resetAt: Date.parse("2026-03-21T17:00:00.000Z")
+            },
+            cooldownUntil: Date.parse("2026-03-21T17:00:00.000Z")
+          };
+        }
+      }
+    );
+
+    expect(result.account.profileId).toBe("openai-codex:new@example.com");
+    expect(result.account.status).toBe("cooldown");
+    expect(result.account.lastErrorCode).toBe("rate_limit");
+    expect(result.account.lastSuccessAt).toBeUndefined();
+
+    const routerState = JSON.parse(await readFile(routerStatePath, "utf8")) as {
+      accounts: Array<{
+        alias: string;
+        profileId: string;
+        status: string;
+        cooldownUntil?: string;
+        lastSuccessAt?: string;
+        lastFailureAt?: string;
+        lastErrorCode?: string;
+      }>;
+    };
+    const rebound = routerState.accounts.find((account) => account.alias === "acct-a");
+    expect(rebound).toMatchObject({
+      alias: "acct-a",
+      profileId: "openai-codex:new@example.com",
+      status: "cooldown",
+      cooldownUntil: "2026-03-21T17:00:00.000Z",
+      lastErrorCode: "rate_limit"
+    });
+    expect(rebound?.lastSuccessAt).toBeUndefined();
+    expect(rebound?.lastFailureAt).toBeDefined();
   });
 
   it("does not fail binding when initial quota hydration errors", async () => {
