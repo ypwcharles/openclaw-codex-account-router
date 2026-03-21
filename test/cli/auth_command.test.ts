@@ -455,4 +455,79 @@ fs.writeFileSync(authStorePath, JSON.stringify(raw, null, 2));
     },
     15000
   );
+
+  it(
+    "uses auth-store from integration state for normalize when explicit auth-store is omitted",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "auth-normalize-intg-paths-"));
+      cleanupPaths.push(dir);
+
+      const homeDir = path.join(dir, "home");
+      const customRoot = path.join(dir, "custom-state");
+      const authStorePath = path.join(customRoot, "auth-profiles.json");
+      const integrationStatePath = path.join(homeDir, ".openclaw-router", "integration.json");
+      await mkdir(path.dirname(authStorePath), { recursive: true });
+      await mkdir(path.dirname(integrationStatePath), { recursive: true });
+      await writeFile(
+        authStorePath,
+        JSON.stringify(
+          {
+            version: 1,
+            profiles: {
+              "openai-codex:default": {
+                provider: "openai-codex",
+                access:
+                  "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL3Byb2ZpbGUiOnsiZW1haWwiOiJpbnRnQGV4YW1wbGUuY29tIn19.signature"
+              }
+            },
+            order: {
+              "openai-codex": ["openai-codex:default"]
+            }
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+      await writeFile(
+        integrationStatePath,
+        JSON.stringify(
+          {
+            version: 1,
+            platform: "linux",
+            installRoot: path.join(homeDir, ".openclaw-router"),
+            shimPath: path.join(homeDir, ".openclaw-router", "bin", "openclaw"),
+            realOpenClawPath: "/usr/bin/openclaw",
+            servicePath: path.join(homeDir, ".openclaw-router", "services", "openclaw-router-repair.service"),
+            lastSetupAt: "2026-03-21T00:00:00.000Z",
+            routerStatePath: path.join(customRoot, "router-state.json"),
+            authStorePath
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+
+      const { stdout } = await execa(
+        "node",
+        ["--import", "tsx", "src/cli/main.ts", "auth", "normalize", "--integration-state", integrationStatePath],
+        {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            HOME: homeDir
+          }
+        }
+      );
+
+      expect(stdout).toContain("Normalized profiles: openai-codex:intg@example.com");
+
+      const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
+        profiles: Record<string, unknown>;
+      };
+      expect(Object.keys(authStore.profiles)).toEqual(["openai-codex:intg@example.com"]);
+    },
+    15000
+  );
 });
