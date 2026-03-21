@@ -1,7 +1,9 @@
 import { classifyCodexFailure } from "../classifier/codex_error_classifier.js";
 import { loadRouterState, saveRouterState } from "../account_store/store.js";
 import type { RouterAccount, RouterState } from "../account_store/types.js";
-import { mirrorFailureToOpenClaw, syncCodexOrder } from "./openclaw_auth_store.js";
+import { mirrorFailureToOpenClaw, mirrorSuccessToOpenClaw, syncCodexOrder } from "./openclaw_auth_store.js";
+import type { CodexQuotaSnapshot } from "./codex_usage_api.js";
+import { fetchCodexUsageSnapshot } from "./codex_usage_api.js";
 import type { MirroredFailureReason } from "./openclaw_usage_mirror.js";
 import { execOpenClawCommand } from "./openclaw_exec.js";
 import type { CodexPoolRunResult, OpenClawExecResult } from "./result.js";
@@ -13,9 +15,18 @@ export async function runWithCodexPool(params: {
   command: string;
   args: string[];
   execOpenClaw?: (command: string, args: string[]) => Promise<OpenClawExecResult>;
+  fetchCodexUsage?: (params: {
+    authStorePath: string;
+    profileId: string;
+    now: Date;
+  }) => Promise<CodexQuotaSnapshot | undefined>;
   now?: () => Date;
 }): Promise<CodexPoolRunResult> {
   const exec = params.execOpenClaw ?? execOpenClawCommand;
+  const fetchCodexUsage =
+    params.fetchCodexUsage ??
+    (async ({ authStorePath, profileId, now }) =>
+      await fetchCodexUsageSnapshot({ authStorePath, profileId, now }));
   const nowFn = params.now ?? (() => new Date());
   const state = await loadRouterState(params.routerStatePath);
 
@@ -38,7 +49,16 @@ export async function runWithCodexPool(params: {
 
     try {
       const result = await exec(params.command, params.args);
-      markSuccess(state, current.alias, nowFn());
+      const now = nowFn();
+      markSuccess(state, current.alias, now);
+      try {
+        await mirrorSuccessToOpenClaw(params.authStorePath, {
+          profileId: current.profileId,
+          now
+        });
+      } catch {
+        // Best-effort only: a successful command must not be retried because mirrored auth state drifted.
+      }
       state.lastProviderFallbackReason = undefined;
       await saveRouterState(params.routerStatePath, state);
       return { poolExhausted: false, usedProfileIds, result };
@@ -63,10 +83,19 @@ export async function runWithCodexPool(params: {
           await saveRouterState(params.routerStatePath, state);
         }
       } else if (classified.action === "cooldown") {
+        const quotaSnapshot = await fetchQuotaSnapshotSafe({
+          classifiedReason: classified.reason,
+          authStorePath: params.authStorePath,
+          profileId: current.profileId,
+          now,
+          fetchCodexUsage
+        });
         const mirrored = await mirrorFailureToOpenClaw(params.authStorePath, {
           profileId: current.profileId,
           reason: toMirroredFailureReason(classified.reason),
-          now
+          now,
+          cooldownUntilMs: quotaSnapshot?.cooldownUntil,
+          quotaSnapshot
         });
         applyCooldown(account, now, classified.normalizedCode, mirrored.cooldownUntil);
         await saveRouterState(params.routerStatePath, state);
@@ -94,6 +123,32 @@ export async function runWithCodexPool(params: {
     usedProfileIds,
     lastError
   };
+}
+
+async function fetchQuotaSnapshotSafe(params: {
+  classifiedReason: "rate_limit" | "auth_permanent" | "billing" | "timeout" | "unknown";
+  authStorePath: string;
+  profileId: string;
+  now: Date;
+  fetchCodexUsage: (params: {
+    authStorePath: string;
+    profileId: string;
+    now: Date;
+  }) => Promise<CodexQuotaSnapshot | undefined>;
+}): Promise<CodexQuotaSnapshot | undefined> {
+  if (params.classifiedReason !== "rate_limit") {
+    return undefined;
+  }
+
+  try {
+    return await params.fetchCodexUsage({
+      authStorePath: params.authStorePath,
+      profileId: params.profileId,
+      now: params.now
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 function toMirroredFailureReason(
