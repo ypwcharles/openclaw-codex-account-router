@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -84,6 +84,96 @@ describe("accounts cli", () => {
     );
 
     expect(stdout).toContain("acct-a");
+    expect(stdout).toContain("openai-codex:user@example.com");
+  });
+
+  it("compat accounts commands use integration-state paths when explicit flags are omitted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "accounts-cli-intg-paths-"));
+    cleanupPaths.push(dir);
+
+    const homeDir = path.join(dir, "home");
+    const customRoot = path.join(dir, "custom-state");
+    const authStorePath = path.join(customRoot, "auth-profiles.json");
+    const routerStatePath = path.join(customRoot, "router-state.json");
+    const integrationStatePath = path.join(homeDir, ".openclaw-router", "integration.json");
+
+    await mkdir(path.dirname(authStorePath), { recursive: true });
+    await mkdir(path.dirname(integrationStatePath), { recursive: true });
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:user@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "token"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      integrationStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          platform: "linux",
+          installRoot: path.join(homeDir, ".openclaw-router"),
+          shimPath: path.join(homeDir, ".openclaw-router", "bin", "openclaw"),
+          realOpenClawPath: "/usr/bin/openclaw",
+          servicePath: path.join(homeDir, ".openclaw-router", "services", "openclaw-router-repair.service"),
+          lastSetupAt: "2026-03-21T00:00:00.000Z",
+          routerStatePath,
+          authStorePath
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await execa(
+      "node",
+      [
+        "--import",
+        "tsx",
+        "src/cli/main.ts",
+        "accounts",
+        "bind",
+        "--alias",
+        "acct-b",
+        "--profile-id",
+        "openai-codex:user@example.com",
+        "--integration-state",
+        integrationStatePath
+      ],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: homeDir
+        }
+      }
+    );
+
+    const { stdout } = await execa(
+      "node",
+      ["--import", "tsx", "src/cli/main.ts", "accounts", "list", "--integration-state", integrationStatePath],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: homeDir
+        }
+      }
+    );
+
+    expect(stdout).toContain("acct-b");
     expect(stdout).toContain("openai-codex:user@example.com");
   });
 });

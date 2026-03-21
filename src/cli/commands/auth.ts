@@ -2,8 +2,8 @@ import { Command } from "commander";
 import { execa } from "execa";
 import { normalizeCodexAuthProfiles } from "../../integration/auth_profiles.js";
 import { loadIntegrationState } from "../../integration/store.js";
-import { resolveAuthStorePath } from "../../shared/paths.js";
 import { resolveOptionalIntegrationStatePath } from "../../shared/paths.js";
+import { resolveCommandState } from "../command_state.js";
 
 type AuthLoginExecResult = {
   exitCode: number;
@@ -68,8 +68,12 @@ export function registerAuthCommand(program: Command): void {
     .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
+      const { authStorePath } = await resolveCommandState({
+        authStore: opts.authStore as string | undefined,
+        integrationState: opts.integrationState as string | undefined
+      });
       const result = await runCodexAuthLogin({
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined),
+        authStorePath,
         command: await resolveAuthLoginCommand(opts.integrationState as string | undefined),
         args: ["models", "auth", "login", "--provider", "openai-codex"]
       });
@@ -88,10 +92,15 @@ export function registerAuthCommand(program: Command): void {
     .command("normalize")
     .description("Normalize the existing OpenClaw auth store into stable email-based codex profiles")
     .option("--auth-store <path>", "OpenClaw auth store path")
+    .option("--integration-state <path>", "Integration state path")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
+      const { authStorePath } = await resolveCommandState({
+        authStore: opts.authStore as string | undefined,
+        integrationState: opts.integrationState as string | undefined
+      });
       const result = await runCodexAuthNormalize({
-        authStorePath: resolveAuthStorePath(opts.authStore as string | undefined)
+        authStorePath
       });
 
       if (opts.json) {
