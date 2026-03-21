@@ -23,6 +23,8 @@ export type RouterStatusPayload = {
     configuredStatus: AccountStatus;
     effectiveStatus: AccountStatus;
     cooldownUntil?: string;
+    retryUntil?: string;
+    retryReason?: string;
     disabledUntil?: string;
     lastErrorCode?: string;
     lastSuccessAt?: string;
@@ -118,6 +120,9 @@ type OpenClawAuthStatus = {
     {
       lastUsed?: number;
       cooldownUntil?: number;
+      retryUntil?: number;
+      retryReason?: string;
+      retryCount?: number;
       disabledUntil?: number;
       disabledReason?: string;
       errorCount?: number;
@@ -135,6 +140,24 @@ type OpenClawAuthStatus = {
       secondaryRemainingPercent?: number;
       secondaryWindowMinutes?: number;
       secondaryResetAt?: number;
+      quota?: {
+        source?: string;
+        fetchedAt?: number;
+        planType?: string;
+        limitReached?: boolean;
+        primary?: {
+          usedPercent?: number;
+          remainingPercent?: number;
+          windowMinutes?: number;
+          resetAt?: number;
+        };
+        secondary?: {
+          usedPercent?: number;
+          remainingPercent?: number;
+          windowMinutes?: number;
+          resetAt?: number;
+        };
+      };
     }
   >;
 };
@@ -169,6 +192,9 @@ function buildStatusAccount(
     | {
         lastUsed?: number;
         cooldownUntil?: number;
+        retryUntil?: number;
+        retryReason?: string;
+        retryCount?: number;
         disabledUntil?: number;
         disabledReason?: string;
         errorCount?: number;
@@ -186,6 +212,24 @@ function buildStatusAccount(
         secondaryRemainingPercent?: number;
         secondaryWindowMinutes?: number;
         secondaryResetAt?: number;
+        quota?: {
+          source?: string;
+          fetchedAt?: number;
+          planType?: string;
+          limitReached?: boolean;
+          primary?: {
+            usedPercent?: number;
+            remainingPercent?: number;
+            windowMinutes?: number;
+            resetAt?: number;
+          };
+          secondary?: {
+            usedPercent?: number;
+            remainingPercent?: number;
+            windowMinutes?: number;
+            resetAt?: number;
+          };
+        };
       }
     | undefined,
   nowMs: number
@@ -193,6 +237,7 @@ function buildStatusAccount(
   const configuredStatus = normalizeConfiguredStatus(account, nowMs);
   const routerCooldownMs = normalizeFutureTimestamp(parseIsoTimestamp(account.cooldownUntil), nowMs);
   const authCooldownMs = normalizeFutureTimestamp(authUsage?.cooldownUntil, nowMs);
+  const authRetryMs = normalizeFutureTimestamp(authUsage?.retryUntil, nowMs);
   const authDisabledMs = normalizeFutureTimestamp(authUsage?.disabledUntil, nowMs);
   const cooldownUntilMs = maxDefined(routerCooldownMs, authCooldownMs);
   const effectiveStatus = resolveEffectiveStatus({
@@ -209,6 +254,8 @@ function buildStatusAccount(
     configuredStatus,
     effectiveStatus,
     cooldownUntil: formatTimestamp(cooldownUntilMs),
+    retryUntil: formatTimestamp(authRetryMs),
+    retryReason: authUsage?.retryReason,
     disabledUntil: formatTimestamp(authDisabledMs),
     lastErrorCode: resolveEffectiveErrorCode(account, authUsage, effectiveStatus),
     lastSuccessAt: account.lastSuccessAt,
@@ -236,6 +283,24 @@ function buildQuotaStatus(
         secondaryRemainingPercent?: number;
         secondaryWindowMinutes?: number;
         secondaryResetAt?: number;
+        quota?: {
+          source?: string;
+          fetchedAt?: number;
+          planType?: string;
+          limitReached?: boolean;
+          primary?: {
+            usedPercent?: number;
+            remainingPercent?: number;
+            windowMinutes?: number;
+            resetAt?: number;
+          };
+          secondary?: {
+            usedPercent?: number;
+            remainingPercent?: number;
+            windowMinutes?: number;
+            resetAt?: number;
+          };
+        };
       }
     | undefined
 ): RouterStatusPayload["accounts"][number]["quota"] | undefined {
@@ -243,24 +308,46 @@ function buildQuotaStatus(
     return undefined;
   }
 
-  const primary = buildQuotaWindow({
-    usedPercent: authUsage.primaryUsedPercent,
-    remainingPercent: authUsage.primaryRemainingPercent,
-    windowMinutes: authUsage.primaryWindowMinutes,
-    resetAt: authUsage.primaryResetAt
-  });
-  const secondary = buildQuotaWindow({
-    usedPercent: authUsage.secondaryUsedPercent,
-    remainingPercent: authUsage.secondaryRemainingPercent,
-    windowMinutes: authUsage.secondaryWindowMinutes,
-    resetAt: authUsage.secondaryResetAt
-  });
+  const primary = buildQuotaWindow(
+    authUsage.quota?.primary
+      ? {
+          usedPercent: authUsage.quota.primary.usedPercent,
+          remainingPercent: authUsage.quota.primary.remainingPercent,
+          windowMinutes: authUsage.quota.primary.windowMinutes,
+          resetAt: authUsage.quota.primary.resetAt
+        }
+      : {
+          usedPercent: authUsage.primaryUsedPercent,
+          remainingPercent: authUsage.primaryRemainingPercent,
+          windowMinutes: authUsage.primaryWindowMinutes,
+          resetAt: authUsage.primaryResetAt
+        }
+  );
+  const secondary = buildQuotaWindow(
+    authUsage.quota?.secondary
+      ? {
+          usedPercent: authUsage.quota.secondary.usedPercent,
+          remainingPercent: authUsage.quota.secondary.remainingPercent,
+          windowMinutes: authUsage.quota.secondary.windowMinutes,
+          resetAt: authUsage.quota.secondary.resetAt
+        }
+      : {
+          usedPercent: authUsage.secondaryUsedPercent,
+          remainingPercent: authUsage.secondaryRemainingPercent,
+          windowMinutes: authUsage.secondaryWindowMinutes,
+          resetAt: authUsage.secondaryResetAt
+        }
+  );
 
+  const source = authUsage.quota?.source ?? authUsage.quotaSource;
+  const fetchedAt = authUsage.quota?.fetchedAt ?? authUsage.quotaFetchedAt;
+  const planType = authUsage.quota?.planType ?? authUsage.planType;
+  const limitReached = authUsage.quota?.limitReached ?? authUsage.limitReached;
   const hasQuota =
-    authUsage.quotaSource !== undefined ||
-    authUsage.quotaFetchedAt !== undefined ||
-    authUsage.planType !== undefined ||
-    authUsage.limitReached !== undefined ||
+    source !== undefined ||
+    fetchedAt !== undefined ||
+    planType !== undefined ||
+    limitReached !== undefined ||
     primary !== undefined ||
     secondary !== undefined;
   if (!hasQuota) {
@@ -268,10 +355,10 @@ function buildQuotaStatus(
   }
 
   return {
-    source: authUsage.quotaSource,
-    fetchedAt: formatTimestamp(authUsage.quotaFetchedAt),
-    planType: authUsage.planType,
-    limitReached: authUsage.limitReached,
+    source,
+    fetchedAt: formatTimestamp(fetchedAt),
+    planType,
+    limitReached,
     primary,
     secondary
   };

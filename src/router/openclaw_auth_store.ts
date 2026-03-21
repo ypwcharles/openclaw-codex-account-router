@@ -63,6 +63,9 @@ export async function mirrorSuccessToOpenClaw(
       cooldownUntil: undefined,
       disabledUntil: undefined,
       disabledReason: undefined,
+      retryUntil: undefined,
+      retryReason: undefined,
+      retryCount: undefined,
       errorCount: 0
     };
   });
@@ -110,7 +113,10 @@ export async function clearProfileFailureState(
       ...existing,
       cooldownUntil: undefined,
       disabledUntil: undefined,
-      disabledReason: undefined
+      disabledReason: undefined,
+      retryUntil: undefined,
+      retryReason: undefined,
+      retryCount: undefined
     };
   });
 }
@@ -126,7 +132,10 @@ export async function clearProfileCooldown(
     const existing = store.usageStats[profileId] ?? {};
     store.usageStats[profileId] = {
       ...existing,
-      cooldownUntil: undefined
+      cooldownUntil: undefined,
+      retryUntil: undefined,
+      retryReason: undefined,
+      retryCount: undefined
     };
   });
 }

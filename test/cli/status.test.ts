@@ -179,6 +179,9 @@ describe("status cli", () => {
           usageStats: {
             "openai-codex:a@example.com": {
               cooldownUntil: Date.parse("2099-01-01T00:00:00.000Z"),
+              retryUntil: Date.parse("2099-01-01T00:00:00.000Z"),
+              retryReason: "rate_limit",
+              retryCount: 1,
               failureCounts: {
                 rate_limit: 1
               },
@@ -194,7 +197,25 @@ describe("status cli", () => {
               secondaryUsedPercent: 40,
               secondaryRemainingPercent: 60,
               secondaryWindowMinutes: 10080,
-              secondaryResetAt: Date.parse("2099-01-07T00:00:00.000Z")
+              secondaryResetAt: Date.parse("2099-01-07T00:00:00.000Z"),
+              quota: {
+                source: "usage_api",
+                fetchedAt: Date.parse("2026-03-21T10:00:00.000Z"),
+                planType: "team",
+                limitReached: true,
+                primary: {
+                  usedPercent: 100,
+                  remainingPercent: 0,
+                  windowMinutes: 300,
+                  resetAt: Date.parse("2099-01-01T00:00:00.000Z")
+                },
+                secondary: {
+                  usedPercent: 40,
+                  remainingPercent: 60,
+                  windowMinutes: 10080,
+                  resetAt: Date.parse("2099-01-07T00:00:00.000Z")
+                }
+              }
             },
             "openai-codex:b@example.com": {
               lastUsed: Date.parse("2026-03-21T10:02:40.664Z")
@@ -232,6 +253,8 @@ describe("status cli", () => {
         alias: string;
         effectiveStatus: string;
         cooldownUntil?: string;
+        retryUntil?: string;
+        retryReason?: string;
         selected: boolean;
         quota?: {
           source?: string;
@@ -260,6 +283,12 @@ describe("status cli", () => {
     expect(payload.lastErrorCodes.find((item) => item.alias === "acct-a")?.code).toBe("rate_limit");
     expect(payload.accounts.find((account) => account.alias === "acct-a")?.effectiveStatus).toBe(
       "cooldown"
+    );
+    expect(payload.accounts.find((account) => account.alias === "acct-a")?.retryUntil).toBe(
+      "2099-01-01T00:00:00.000Z"
+    );
+    expect(payload.accounts.find((account) => account.alias === "acct-a")?.retryReason).toBe(
+      "rate_limit"
     );
     expect(payload.accounts.find((account) => account.alias === "acct-a")?.quota).toEqual({
       source: "usage_api",

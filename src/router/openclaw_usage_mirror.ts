@@ -15,6 +15,9 @@ export type OpenClawUsageStats = {
   errorCount?: number;
   failureCounts?: Partial<Record<MirroredFailureReason, number>>;
   lastFailureAt?: number;
+  retryUntil?: number;
+  retryReason?: "timeout" | "unknown";
+  retryCount?: number;
   quotaSource?: "usage_api";
   quotaFetchedAt?: number;
   planType?: string;
@@ -27,6 +30,24 @@ export type OpenClawUsageStats = {
   secondaryRemainingPercent?: number;
   secondaryWindowMinutes?: number;
   secondaryResetAt?: number;
+  quota?: {
+    source?: "usage_api";
+    fetchedAt?: number;
+    planType?: string;
+    limitReached?: boolean;
+    primary?: {
+      usedPercent?: number;
+      remainingPercent?: number;
+      windowMinutes?: number;
+      resetAt?: number;
+    };
+    secondary?: {
+      usedPercent?: number;
+      remainingPercent?: number;
+      windowMinutes?: number;
+      resetAt?: number;
+    };
+  };
 };
 
 export function mirrorFailureStats(params: {
@@ -60,6 +81,9 @@ export function mirrorFailureStats(params: {
     next.disabledUntil = params.nowMs + disableMs;
     next.disabledReason = params.reason;
     next.cooldownUntil = undefined;
+    next.retryUntil = undefined;
+    next.retryReason = undefined;
+    next.retryCount = undefined;
     return next;
   }
 
@@ -70,6 +94,17 @@ export function mirrorFailureStats(params: {
   next.cooldownUntil = cooldownMs;
   next.disabledUntil = undefined;
   next.disabledReason = undefined;
+
+  if (params.reason === "timeout" || params.reason === "unknown") {
+    next.retryUntil = cooldownMs;
+    next.retryReason = params.reason;
+    next.retryCount = failureCounts[params.reason] ?? 1;
+  } else {
+    next.retryUntil = undefined;
+    next.retryReason = undefined;
+    next.retryCount = undefined;
+  }
+
   return next;
 }
 
@@ -94,6 +129,28 @@ function applyQuotaSnapshot(
     secondaryUsedPercent: snapshot.secondary?.usedPercent,
     secondaryRemainingPercent: snapshot.secondary?.remainingPercent,
     secondaryWindowMinutes: snapshot.secondary?.windowMinutes,
-    secondaryResetAt: snapshot.secondary?.resetAt
+    secondaryResetAt: snapshot.secondary?.resetAt,
+    quota: {
+      source: snapshot.source,
+      fetchedAt: snapshot.fetchedAt,
+      planType: snapshot.planType,
+      limitReached: snapshot.limitReached,
+      primary: snapshot.primary
+        ? {
+            usedPercent: snapshot.primary.usedPercent,
+            remainingPercent: snapshot.primary.remainingPercent,
+            windowMinutes: snapshot.primary.windowMinutes,
+            resetAt: snapshot.primary.resetAt
+          }
+        : undefined,
+      secondary: snapshot.secondary
+        ? {
+            usedPercent: snapshot.secondary.usedPercent,
+            remainingPercent: snapshot.secondary.remainingPercent,
+            windowMinutes: snapshot.secondary.windowMinutes,
+            resetAt: snapshot.secondary.resetAt
+          }
+        : undefined
+    }
   };
 }

@@ -115,6 +115,18 @@ describe("runWithCodexPool", () => {
           primaryResetAt?: number;
           primaryRemainingPercent?: number;
           planType?: string;
+          quota?: {
+            source?: string;
+            fetchedAt?: number;
+            planType?: string;
+            limitReached?: boolean;
+            primary?: {
+              usedPercent?: number;
+              remainingPercent?: number;
+              windowMinutes?: number;
+              resetAt?: number;
+            };
+          };
         }
       >;
     };
@@ -130,6 +142,18 @@ describe("runWithCodexPool", () => {
     );
     expect(authStore.usageStats?.["openai-codex:a@example.com"]?.primaryRemainingPercent).toBe(0);
     expect(authStore.usageStats?.["openai-codex:a@example.com"]?.planType).toBe("team");
+    expect(authStore.usageStats?.["openai-codex:a@example.com"]?.quota).toEqual({
+      source: "usage_api",
+      fetchedAt: Date.parse("2026-03-19T12:00:00.000Z"),
+      planType: "team",
+      limitReached: true,
+      primary: {
+        usedPercent: 100,
+        remainingPercent: 0,
+        windowMinutes: 300,
+        resetAt: Date.parse("2026-03-19T13:30:00.000Z")
+      }
+    });
     expect(authStore.lastGood?.["openai-codex"]).toBe("openai-codex:b@example.com");
     expect(authStore.usageStats?.["openai-codex:b@example.com"]?.lastUsed).toBe(
       Date.parse("2026-03-19T12:00:00.000Z")
@@ -207,7 +231,16 @@ describe("runWithCodexPool", () => {
     });
 
     const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
-      usageStats?: Record<string, { failureCounts?: Record<string, number> }>;
+      usageStats?: Record<
+        string,
+        {
+          failureCounts?: Record<string, number>;
+          retryUntil?: number;
+          retryReason?: string;
+          retryCount?: number;
+          cooldownUntil?: number;
+        }
+      >;
     };
     const usage = authStore.usageStats?.["openai-codex:a@example.com"];
     expect(result.poolExhausted).toBe(false);
@@ -218,5 +251,9 @@ describe("runWithCodexPool", () => {
     ]);
     expect(usage?.failureCounts?.["timeout"]).toBe(1);
     expect(usage?.failureCounts?.["rate_limit"]).toBeUndefined();
+    expect(usage?.retryReason).toBe("timeout");
+    expect(usage?.retryCount).toBe(1);
+    expect(usage?.retryUntil).toBe(Date.parse("2026-03-19T12:01:00.000Z"));
+    expect(usage?.cooldownUntil).toBe(Date.parse("2026-03-19T12:01:00.000Z"));
   });
 });
