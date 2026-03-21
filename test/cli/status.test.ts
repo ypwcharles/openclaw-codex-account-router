@@ -182,7 +182,19 @@ describe("status cli", () => {
               failureCounts: {
                 rate_limit: 1
               },
-              lastFailureAt: Date.parse("2026-03-21T10:05:43.701Z")
+              lastFailureAt: Date.parse("2026-03-21T10:05:43.701Z"),
+              quotaSource: "usage_api",
+              quotaFetchedAt: Date.parse("2026-03-21T10:00:00.000Z"),
+              planType: "team",
+              limitReached: true,
+              primaryUsedPercent: 100,
+              primaryRemainingPercent: 0,
+              primaryWindowMinutes: 300,
+              primaryResetAt: Date.parse("2099-01-01T00:00:00.000Z"),
+              secondaryUsedPercent: 40,
+              secondaryRemainingPercent: 60,
+              secondaryWindowMinutes: 10080,
+              secondaryResetAt: Date.parse("2099-01-07T00:00:00.000Z")
             },
             "openai-codex:b@example.com": {
               lastUsed: Date.parse("2026-03-21T10:02:40.664Z")
@@ -221,6 +233,22 @@ describe("status cli", () => {
         effectiveStatus: string;
         cooldownUntil?: string;
         selected: boolean;
+        quota?: {
+          source?: string;
+          fetchedAt?: string;
+          planType?: string;
+          limitReached?: boolean;
+          primary?: {
+            remainingPercent?: number;
+            resetAt?: string;
+            windowMinutes?: number;
+          };
+          secondary?: {
+            remainingPercent?: number;
+            resetAt?: string;
+            windowMinutes?: number;
+          };
+        };
       }>;
     };
 
@@ -233,6 +261,24 @@ describe("status cli", () => {
     expect(payload.accounts.find((account) => account.alias === "acct-a")?.effectiveStatus).toBe(
       "cooldown"
     );
+    expect(payload.accounts.find((account) => account.alias === "acct-a")?.quota).toEqual({
+      source: "usage_api",
+      fetchedAt: "2026-03-21T10:00:00.000Z",
+      planType: "team",
+      limitReached: true,
+      primary: {
+        usedPercent: 100,
+        remainingPercent: 0,
+        resetAt: "2099-01-01T00:00:00.000Z",
+        windowMinutes: 300
+      },
+      secondary: {
+        usedPercent: 40,
+        remainingPercent: 60,
+        resetAt: "2099-01-07T00:00:00.000Z",
+        windowMinutes: 10080
+      }
+    });
     expect(payload.accounts.find((account) => account.alias === "acct-b")?.selected).toBe(true);
   });
 

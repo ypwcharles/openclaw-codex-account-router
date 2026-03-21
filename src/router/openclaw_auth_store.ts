@@ -7,6 +7,7 @@ import {
   type MirroredFailureReason,
   type OpenClawUsageStats
 } from "./openclaw_usage_mirror.js";
+import type { CodexQuotaSnapshot } from "./codex_usage_api.js";
 import { getOpenClawAuthLockPath } from "./openclaw_auth_lock.js";
 import {
   resolveDefaultOpenClawAuthStorePath,
@@ -19,18 +20,7 @@ type OpenClawStore = {
   profiles: Record<string, unknown>;
   order?: Record<string, string[]>;
   lastGood?: Record<string, string>;
-  usageStats?: Record<
-    string,
-    {
-      lastUsed?: number;
-      cooldownUntil?: number;
-      disabledUntil?: number;
-      disabledReason?: MirroredFailureReason;
-      errorCount?: number;
-      failureCounts?: Partial<Record<MirroredFailureReason, number>>;
-      lastFailureAt?: number;
-    }
-  >;
+  usageStats?: Record<string, OpenClawUsageStats>;
 };
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
@@ -92,6 +82,8 @@ export async function mirrorFailureToOpenClaw(
     profileId: string;
     reason: MirroredFailureReason;
     now: Date;
+    cooldownUntilMs?: number;
+    quotaSnapshot?: CodexQuotaSnapshot;
   }
 ): Promise<OpenClawUsageStats> {
   return await updateOpenClawStore(authStorePath, (store) => {
@@ -99,7 +91,9 @@ export async function mirrorFailureToOpenClaw(
     const nextStats = mirrorFailureStats({
       existing: store.usageStats[params.profileId],
       reason: params.reason,
-      nowMs: params.now.getTime()
+      nowMs: params.now.getTime(),
+      cooldownUntilOverrideMs: params.cooldownUntilMs,
+      quotaSnapshot: params.quotaSnapshot
     });
     store.usageStats[params.profileId] = nextStats;
     if (params.reason === "auth_permanent" || params.reason === "billing") {

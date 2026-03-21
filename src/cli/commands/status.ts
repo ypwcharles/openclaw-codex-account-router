@@ -29,6 +29,24 @@ export type RouterStatusPayload = {
     lastFailureAt?: string;
     lastUsedAt?: string;
     selected: boolean;
+    quota?: {
+      source?: string;
+      fetchedAt?: string;
+      planType?: string;
+      limitReached?: boolean;
+      primary?: {
+        usedPercent?: number;
+        remainingPercent?: number;
+        windowMinutes?: number;
+        resetAt?: string;
+      };
+      secondary?: {
+        usedPercent?: number;
+        remainingPercent?: number;
+        windowMinutes?: number;
+        resetAt?: string;
+      };
+    };
   }>;
   lastProviderFallbackReason?: string;
   integration: {
@@ -105,6 +123,18 @@ type OpenClawAuthStatus = {
       errorCount?: number;
       failureCounts?: Record<string, number>;
       lastFailureAt?: number;
+      quotaSource?: string;
+      quotaFetchedAt?: number;
+      planType?: string;
+      limitReached?: boolean;
+      primaryUsedPercent?: number;
+      primaryRemainingPercent?: number;
+      primaryWindowMinutes?: number;
+      primaryResetAt?: number;
+      secondaryUsedPercent?: number;
+      secondaryRemainingPercent?: number;
+      secondaryWindowMinutes?: number;
+      secondaryResetAt?: number;
     }
   >;
 };
@@ -144,6 +174,18 @@ function buildStatusAccount(
         errorCount?: number;
         failureCounts?: Record<string, number>;
         lastFailureAt?: number;
+        quotaSource?: string;
+        quotaFetchedAt?: number;
+        planType?: string;
+        limitReached?: boolean;
+        primaryUsedPercent?: number;
+        primaryRemainingPercent?: number;
+        primaryWindowMinutes?: number;
+        primaryResetAt?: number;
+        secondaryUsedPercent?: number;
+        secondaryRemainingPercent?: number;
+        secondaryWindowMinutes?: number;
+        secondaryResetAt?: number;
       }
     | undefined,
   nowMs: number
@@ -174,7 +216,94 @@ function buildStatusAccount(
       maxDefined(parseIsoTimestamp(account.lastFailureAt), authUsage?.lastFailureAt)
     ),
     lastUsedAt: formatTimestamp(authUsage?.lastUsed),
-    selected: false
+    selected: false,
+    quota: buildQuotaStatus(authUsage)
+  };
+}
+
+function buildQuotaStatus(
+  authUsage:
+    | {
+        quotaSource?: string;
+        quotaFetchedAt?: number;
+        planType?: string;
+        limitReached?: boolean;
+        primaryUsedPercent?: number;
+        primaryRemainingPercent?: number;
+        primaryWindowMinutes?: number;
+        primaryResetAt?: number;
+        secondaryUsedPercent?: number;
+        secondaryRemainingPercent?: number;
+        secondaryWindowMinutes?: number;
+        secondaryResetAt?: number;
+      }
+    | undefined
+): RouterStatusPayload["accounts"][number]["quota"] | undefined {
+  if (!authUsage) {
+    return undefined;
+  }
+
+  const primary = buildQuotaWindow({
+    usedPercent: authUsage.primaryUsedPercent,
+    remainingPercent: authUsage.primaryRemainingPercent,
+    windowMinutes: authUsage.primaryWindowMinutes,
+    resetAt: authUsage.primaryResetAt
+  });
+  const secondary = buildQuotaWindow({
+    usedPercent: authUsage.secondaryUsedPercent,
+    remainingPercent: authUsage.secondaryRemainingPercent,
+    windowMinutes: authUsage.secondaryWindowMinutes,
+    resetAt: authUsage.secondaryResetAt
+  });
+
+  const hasQuota =
+    authUsage.quotaSource !== undefined ||
+    authUsage.quotaFetchedAt !== undefined ||
+    authUsage.planType !== undefined ||
+    authUsage.limitReached !== undefined ||
+    primary !== undefined ||
+    secondary !== undefined;
+  if (!hasQuota) {
+    return undefined;
+  }
+
+  return {
+    source: authUsage.quotaSource,
+    fetchedAt: formatTimestamp(authUsage.quotaFetchedAt),
+    planType: authUsage.planType,
+    limitReached: authUsage.limitReached,
+    primary,
+    secondary
+  };
+}
+
+function buildQuotaWindow(params: {
+  usedPercent?: number;
+  remainingPercent?: number;
+  windowMinutes?: number;
+  resetAt?: number;
+}):
+  | {
+      usedPercent?: number;
+      remainingPercent?: number;
+      windowMinutes?: number;
+      resetAt?: string;
+    }
+  | undefined {
+  const hasValue =
+    params.usedPercent !== undefined ||
+    params.remainingPercent !== undefined ||
+    params.windowMinutes !== undefined ||
+    params.resetAt !== undefined;
+  if (!hasValue) {
+    return undefined;
+  }
+
+  return {
+    usedPercent: params.usedPercent,
+    remainingPercent: params.remainingPercent,
+    windowMinutes: params.windowMinutes,
+    resetAt: formatTimestamp(params.resetAt)
   };
 }
 

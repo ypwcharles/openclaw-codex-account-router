@@ -78,6 +78,19 @@ describe("runWithCodexPool", () => {
       command: "openclaw",
       args: ["agent"],
       execOpenClaw,
+      fetchCodexUsage: async () => ({
+        source: "usage_api",
+        fetchedAt: Date.parse("2026-03-19T12:00:00.000Z"),
+        planType: "team",
+        limitReached: true,
+        primary: {
+          usedPercent: 100,
+          remainingPercent: 0,
+          windowMinutes: 300,
+          resetAt: Date.parse("2026-03-19T13:30:00.000Z")
+        },
+        cooldownUntil: Date.parse("2026-03-19T13:30:00.000Z")
+      }),
       now: () => new Date("2026-03-19T12:00:00.000Z")
     });
 
@@ -92,13 +105,31 @@ describe("runWithCodexPool", () => {
     };
     const authStore = JSON.parse(await readFile(authStorePath, "utf8")) as {
       lastGood?: Record<string, string>;
-      usageStats?: Record<string, { cooldownUntil?: number; lastUsed?: number; errorCount?: number }>;
+      usageStats?: Record<
+        string,
+        {
+          cooldownUntil?: number;
+          lastUsed?: number;
+          errorCount?: number;
+          quotaSource?: string;
+          primaryResetAt?: number;
+          primaryRemainingPercent?: number;
+          planType?: string;
+        }
+      >;
     };
     const routerCooldown = routerState.accounts.find((x) => x.alias === "acct-a")?.cooldownUntil;
     const mirroredCooldown = authStore.usageStats?.["openai-codex:a@example.com"]?.cooldownUntil;
     expect(routerCooldown).toBeDefined();
     expect(mirroredCooldown).toBeDefined();
     expect(new Date(routerCooldown ?? "").getTime()).toBe(mirroredCooldown);
+    expect(mirroredCooldown).toBe(Date.parse("2026-03-19T13:30:00.000Z"));
+    expect(authStore.usageStats?.["openai-codex:a@example.com"]?.quotaSource).toBe("usage_api");
+    expect(authStore.usageStats?.["openai-codex:a@example.com"]?.primaryResetAt).toBe(
+      Date.parse("2026-03-19T13:30:00.000Z")
+    );
+    expect(authStore.usageStats?.["openai-codex:a@example.com"]?.primaryRemainingPercent).toBe(0);
+    expect(authStore.usageStats?.["openai-codex:a@example.com"]?.planType).toBe("team");
     expect(authStore.lastGood?.["openai-codex"]).toBe("openai-codex:b@example.com");
     expect(authStore.usageStats?.["openai-codex:b@example.com"]?.lastUsed).toBe(
       Date.parse("2026-03-19T12:00:00.000Z")
