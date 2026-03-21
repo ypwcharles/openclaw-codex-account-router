@@ -87,4 +87,45 @@ describe("account cli", () => {
     expect(stdout).toContain("acct-a");
     expect(stdout).toContain("openai-codex:user@example.com");
   });
+
+  it("list command falls back to the installed router-state under HOME", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "account-cli-default-router-state-"));
+    cleanupPaths.push(dir);
+
+    const homeDir = path.join(dir, "home");
+    const routerStatePath = path.join(homeDir, ".openclaw-router", "router-state.json");
+    await mkdir(path.dirname(routerStatePath), { recursive: true });
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:user@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const { stdout } = await execa("node", ["--import", "tsx", "src/cli/main.ts", "account", "list"], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HOME: homeDir
+      }
+    });
+
+    expect(stdout).toContain("acct-a");
+    expect(stdout).toContain("openai-codex:user@example.com");
+  });
 });
