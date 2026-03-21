@@ -3,6 +3,7 @@ import path from "node:path";
 import { execa } from "execa";
 import lockfile from "proper-lockfile";
 import {
+  mergeQuotaSnapshot,
   mirrorFailureStats,
   type MirroredFailureReason,
   type OpenClawUsageStats
@@ -101,6 +102,36 @@ export async function mirrorFailureToOpenClaw(
       }
     }
     return nextStats;
+  });
+}
+
+export async function mirrorQuotaSnapshotToOpenClaw(
+  authStorePath: string,
+  params: {
+    profileId: string;
+    snapshot: CodexQuotaSnapshot;
+    now: Date;
+  }
+): Promise<OpenClawUsageStats> {
+  return await updateOpenClawStore(authStorePath, (store) => {
+    store.usageStats = store.usageStats ?? {};
+    const existing = store.usageStats[params.profileId] ?? {};
+    const nextStats = mergeQuotaSnapshot(existing, params.snapshot);
+    const quotaCooldownUntil =
+      typeof params.snapshot.cooldownUntil === "number" &&
+      Number.isFinite(params.snapshot.cooldownUntil) &&
+      params.snapshot.cooldownUntil > params.now.getTime()
+        ? params.snapshot.cooldownUntil
+        : undefined;
+
+    store.usageStats[params.profileId] = {
+      ...nextStats,
+      cooldownUntil:
+        existing.disabledUntil !== undefined || existing.retryUntil !== undefined
+          ? nextStats.cooldownUntil
+          : quotaCooldownUntil
+    };
+    return store.usageStats[params.profileId] ?? nextStats;
   });
 }
 

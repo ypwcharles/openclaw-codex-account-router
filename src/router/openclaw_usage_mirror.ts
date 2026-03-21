@@ -63,7 +63,7 @@ export function mirrorFailureStats(params: {
   const failureCounts = { ...(existing.failureCounts ?? {}) };
   failureCounts[params.reason] = (failureCounts[params.reason] ?? 0) + 1;
 
-  const next: OpenClawUsageStats = applyQuotaSnapshot(
+  const next: OpenClawUsageStats = mergeQuotaSnapshot(
     {
       ...existing,
       errorCount: nextErrorCount,
@@ -110,7 +110,7 @@ export function mirrorFailureStats(params: {
   return next;
 }
 
-function applyQuotaSnapshot(
+export function mergeQuotaSnapshot(
   target: OpenClawUsageStats,
   snapshot: CodexQuotaSnapshot | undefined
 ): OpenClawUsageStats {

@@ -5,8 +5,10 @@ import type { RouterAccount, RouterState } from "./types.js";
 import {
   clearProfileCooldown,
   clearProfileFailureState,
+  mirrorQuotaSnapshotToOpenClaw,
   syncCodexOrder
 } from "../router/openclaw_auth_store.js";
+import { fetchCodexUsageSnapshot, type CodexQuotaSnapshot } from "../router/codex_usage_api.js";
 
 type OpenClawAuthProfile = {
   provider?: string;
@@ -18,14 +20,23 @@ type OpenClawAuthStore = {
   profiles?: Record<string, OpenClawAuthProfile>;
 };
 
-export async function bindAccount(params: {
-  alias: string;
-  profileId: string;
-  routerStatePath: string;
-  authStorePath: string;
-  priority?: number;
-  forceDefault?: boolean;
-}): Promise<{ account: RouterAccount; state: RouterState }> {
+export async function bindAccount(
+  params: {
+    alias: string;
+    profileId: string;
+    routerStatePath: string;
+    authStorePath: string;
+    priority?: number;
+    forceDefault?: boolean;
+  },
+  deps?: {
+    fetchCodexUsage?: (params: {
+      authStorePath: string;
+      profileId: string;
+      now: Date;
+    }) => Promise<CodexQuotaSnapshot | undefined>;
+  }
+): Promise<{ account: RouterAccount; state: RouterState }> {
   const alias = params.alias.trim();
   const profileId = params.profileId.trim();
   if (!alias) {
@@ -87,7 +98,21 @@ export async function bindAccount(params: {
       .sort((a, b) => a.priority - b.priority)
       .map((item) => item.profileId)
   );
-  return { account, state: nextState };
+
+  const fetchCodexUsage =
+    deps?.fetchCodexUsage ??
+    (async ({ authStorePath, profileId, now }) =>
+      await fetchCodexUsageSnapshot({ authStorePath, profileId, now }));
+  const hydrated = await hydrateBoundAccountState({
+    existingStatus: existing?.status,
+    alias,
+    profileId,
+    routerStatePath: params.routerStatePath,
+    authStorePath: params.authStorePath,
+    fetchCodexUsage
+  });
+
+  return { account: hydrated?.account ?? account, state: hydrated?.state ?? nextState };
 }
 
 export async function listAccounts(routerStatePath: string): Promise<RouterAccount[]> {
@@ -176,6 +201,70 @@ export async function setAccountOrderByAlias(params: {
     nextAccounts.filter((item) => item.enabled).map((item) => item.profileId)
   );
   return nextState;
+}
+
+async function hydrateBoundAccountState(params: {
+  existingStatus?: RouterAccount["status"];
+  alias: string;
+  profileId: string;
+  routerStatePath: string;
+  authStorePath: string;
+  fetchCodexUsage: (params: {
+    authStorePath: string;
+    profileId: string;
+    now: Date;
+  }) => Promise<CodexQuotaSnapshot | undefined>;
+}): Promise<{ account: RouterAccount; state: RouterState } | undefined> {
+  if (params.existingStatus && params.existingStatus !== "unknown") {
+    return undefined;
+  }
+
+  const now = new Date();
+  let snapshot: CodexQuotaSnapshot | undefined;
+  try {
+    snapshot = await params.fetchCodexUsage({
+      authStorePath: params.authStorePath,
+      profileId: params.profileId,
+      now
+    });
+  } catch {
+    return undefined;
+  }
+
+  if (!snapshot) {
+    return undefined;
+  }
+
+  await mirrorQuotaSnapshotToOpenClaw(params.authStorePath, {
+    profileId: params.profileId,
+    snapshot,
+    now
+  });
+
+  const state = await loadRouterState(params.routerStatePath);
+  const index = state.accounts.findIndex((item) => item.alias === params.alias);
+  if (index < 0) {
+    return undefined;
+  }
+
+  const current = state.accounts[index];
+  if (current.status !== "unknown") {
+    return { account: current, state };
+  }
+
+  const cooldownMs =
+    typeof snapshot.cooldownUntil === "number" && Number.isFinite(snapshot.cooldownUntil) && snapshot.cooldownUntil > now.getTime()
+      ? snapshot.cooldownUntil
+      : undefined;
+  const next: RouterAccount = {
+    ...current,
+    status: cooldownMs !== undefined ? "cooldown" : "healthy",
+    cooldownUntil: cooldownMs !== undefined ? new Date(cooldownMs).toISOString() : undefined,
+    lastErrorCode: cooldownMs !== undefined ? "rate_limit" : undefined
+  };
+  state.accounts[index] = next;
+  await saveRouterState(params.routerStatePath, state);
+  return { account: next, state };
 }
 
 export async function clearAccountCooldown(params: {
