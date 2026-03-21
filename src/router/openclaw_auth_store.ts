@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { execa } from "execa";
 import lockfile from "proper-lockfile";
 import {
   mirrorFailureStats,
@@ -7,6 +8,11 @@ import {
   type OpenClawUsageStats
 } from "./openclaw_usage_mirror.js";
 import { getOpenClawAuthLockPath } from "./openclaw_auth_lock.js";
+import {
+  resolveDefaultOpenClawAuthStorePath,
+  resolveDefaultOpenClawGatewayServicePath,
+  resolveDefaultOpenClawSessionStorePath
+} from "./openclaw_paths.js";
 
 type OpenClawStore = {
   version: number;
@@ -29,6 +35,15 @@ type OpenClawStore = {
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 
+type SessionEntry = {
+  updatedAt?: number;
+  compactionCount?: number;
+  modelProvider?: string;
+  authProfileOverride?: string;
+  authProfileOverrideSource?: string;
+  authProfileOverrideCompactionCount?: number;
+};
+
 export async function syncCodexOrder(
   authStorePath: string,
   orderedProfileIds: string[]
@@ -45,6 +60,7 @@ export async function syncCodexOrder(
     store.lastGood = store.lastGood ?? {};
     store.lastGood[OPENAI_CODEX_PROVIDER] = orderedProfileIds[0];
   });
+  await syncOpenClawRuntimeState(authStorePath, orderedProfileIds);
 }
 
 export async function mirrorSuccessToOpenClaw(
@@ -129,6 +145,76 @@ export async function clearProfileCooldown(
   });
 }
 
+export async function syncAutoSessionAuthOverrides(
+  sessionStorePath: string,
+  orderedProfileIds: string[]
+): Promise<void> {
+  await updateSessionStore(sessionStorePath, (store) => {
+    let changed = false;
+    for (const value of Object.values(store)) {
+      if (!value || typeof value !== "object") {
+        continue;
+      }
+      const entry = value as SessionEntry;
+      if (entry.modelProvider !== OPENAI_CODEX_PROVIDER) {
+        continue;
+      }
+      if (entry.authProfileOverrideSource === "user") {
+        continue;
+      }
+
+      if (orderedProfileIds.length === 0) {
+        if (
+          entry.authProfileOverride !== undefined ||
+          entry.authProfileOverrideSource !== undefined ||
+          entry.authProfileOverrideCompactionCount !== undefined
+        ) {
+          delete entry.authProfileOverride;
+          delete entry.authProfileOverrideSource;
+          delete entry.authProfileOverrideCompactionCount;
+          entry.updatedAt = Date.now();
+          changed = true;
+        }
+        continue;
+      }
+
+      const nextProfileId = orderedProfileIds[0];
+      const nextCompactionCount = entry.compactionCount ?? 0;
+      if (
+        entry.authProfileOverride === nextProfileId &&
+        entry.authProfileOverrideSource === "auto" &&
+        entry.authProfileOverrideCompactionCount === nextCompactionCount
+      ) {
+        continue;
+      }
+      entry.authProfileOverride = nextProfileId;
+      entry.authProfileOverrideSource = "auto";
+      entry.authProfileOverrideCompactionCount = nextCompactionCount;
+      entry.updatedAt = Date.now();
+      changed = true;
+    }
+    return changed;
+  });
+}
+
+async function syncOpenClawRuntimeState(
+  authStorePath: string,
+  orderedProfileIds: string[]
+): Promise<void> {
+  if (process.env.OPENCLAW_ROUTER_SKIP_RUNTIME_SYNC === "1") {
+    return;
+  }
+  if (!isDefaultAuthStorePath(authStorePath)) {
+    return;
+  }
+
+  const sessionStorePath = resolveDefaultOpenClawSessionStorePath();
+  if (await pathExists(sessionStorePath)) {
+    await syncAutoSessionAuthOverrides(sessionStorePath, orderedProfileIds);
+  }
+  await restartGatewayServiceIfActive();
+}
+
 async function updateOpenClawStore<T>(
   authStorePath: string,
   updater: (store: OpenClawStore) => T
@@ -159,6 +245,38 @@ async function updateOpenClawStore<T>(
   }
 }
 
+async function updateSessionStore(
+  sessionStorePath: string,
+  updater: (store: Record<string, unknown>) => boolean
+): Promise<void> {
+  const dir = path.dirname(sessionStorePath);
+  const lockPath = path.join(dir, ".sessions.lock");
+  const tempPath = `${sessionStorePath}.tmp`;
+
+  await mkdir(dir, { recursive: true });
+  const release = await lockfile.lock(dir, {
+    lockfilePath: lockPath,
+    retries: {
+      retries: 5,
+      factor: 1.4,
+      minTimeout: 50,
+      maxTimeout: 300
+    }
+  });
+
+  try {
+    const store = await loadSessionStore(sessionStorePath);
+    const changed = updater(store);
+    if (!changed) {
+      return;
+    }
+    await writeFile(tempPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+    await rename(tempPath, sessionStorePath);
+  } finally {
+    await release();
+  }
+}
+
 async function loadOpenClawStore(authStorePath: string): Promise<OpenClawStore> {
   try {
     const raw = await readFile(authStorePath, "utf8");
@@ -167,6 +285,22 @@ async function loadOpenClawStore(authStorePath: string): Promise<OpenClawStore> 
   } catch (error) {
     if (isFileNotFound(error)) {
       return { version: 1, profiles: {} };
+    }
+    throw error;
+  }
+}
+
+async function loadSessionStore(sessionStorePath: string): Promise<Record<string, unknown>> {
+  try {
+    const raw = await readFile(sessionStorePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    if (isFileNotFound(error)) {
+      return {};
     }
     throw error;
   }
@@ -206,4 +340,41 @@ function isFileNotFound(error: unknown): boolean {
       "code" in error &&
       (error as { code?: unknown }).code === "ENOENT"
   );
+}
+
+function isDefaultAuthStorePath(authStorePath: string): boolean {
+  try {
+    return path.resolve(authStorePath) === path.resolve(resolveDefaultOpenClawAuthStorePath());
+  } catch {
+    return false;
+  }
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function restartGatewayServiceIfActive(): Promise<void> {
+  if (process.platform !== "linux") {
+    return;
+  }
+  if (!(await pathExists(resolveDefaultOpenClawGatewayServicePath()))) {
+    return;
+  }
+
+  const active = await execa("systemctl", ["--user", "is-active", "openclaw-gateway.service"], {
+    reject: false
+  });
+  if (active.exitCode !== 0) {
+    return;
+  }
+
+  await execa("systemctl", ["--user", "restart", "openclaw-gateway.service"], {
+    reject: false
+  });
 }

@@ -100,6 +100,7 @@ describe("status cli", () => {
       nextCandidate?: string;
       lastProviderFallbackReason?: string;
       cooldowns: Array<{ alias: string; until?: string }>;
+      accounts: Array<{ alias: string; effectiveStatus: string; selected: boolean }>;
       integration: {
         installed: boolean;
         shimPath?: string;
@@ -112,10 +113,127 @@ describe("status cli", () => {
       { alias: "acct-c", until: "2099-01-01T00:00:00.000Z" }
     ]);
     expect(payload.nextCandidate).toBe("acct-a");
+    expect(payload.accounts.find((account) => account.alias === "acct-a")?.selected).toBe(true);
     expect(payload.lastProviderFallbackReason).toBe("Codex account pool exhausted");
     expect(payload.integration.installed).toBe(true);
     expect(payload.integration.shimPath).toContain("openclaw");
     expect(payload.integration.realOpenClawPath).toBe("/usr/bin/openclaw");
+  });
+
+  it("merges upstream auth-store cooldown into status selection", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "status-cli-auth-"));
+    cleanupPaths.push(dir);
+    const routerStatePath = path.join(dir, "router-state.json");
+    const authStorePath = path.join(dir, "auth-profiles.json");
+
+    await writeFile(
+      routerStatePath,
+      JSON.stringify(
+        {
+          version: 1,
+          accounts: [
+            {
+              alias: "acct-a",
+              profileId: "openai-codex:a@example.com",
+              provider: "openai-codex",
+              priority: 10,
+              status: "healthy",
+              enabled: true
+            },
+            {
+              alias: "acct-b",
+              profileId: "openai-codex:b@example.com",
+              provider: "openai-codex",
+              priority: 20,
+              status: "healthy",
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await writeFile(
+      authStorePath,
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "openai-codex:a@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "a"
+            },
+            "openai-codex:b@example.com": {
+              type: "oauth",
+              provider: "openai-codex",
+              access: "b"
+            }
+          },
+          lastGood: {
+            "openai-codex": "openai-codex:a@example.com"
+          },
+          usageStats: {
+            "openai-codex:a@example.com": {
+              cooldownUntil: Date.parse("2099-01-01T00:00:00.000Z"),
+              failureCounts: {
+                rate_limit: 1
+              },
+              lastFailureAt: Date.parse("2026-03-21T10:05:43.701Z")
+            },
+            "openai-codex:b@example.com": {
+              lastUsed: Date.parse("2026-03-21T10:02:40.664Z")
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const { stdout } = await execa(
+      "node",
+      [
+        "--import",
+        "tsx",
+        "src/cli/main.ts",
+        "status",
+        "--router-state",
+        routerStatePath,
+        "--auth-store",
+        authStorePath,
+        "--json"
+      ],
+      { cwd: repoRoot }
+    );
+
+    const payload = JSON.parse(stdout) as {
+      nextCandidate?: string;
+      authLastGoodProfileId?: string;
+      cooldowns: Array<{ alias: string; until?: string }>;
+      lastErrorCodes: Array<{ alias: string; code?: string }>;
+      accounts: Array<{
+        alias: string;
+        effectiveStatus: string;
+        cooldownUntil?: string;
+        selected: boolean;
+      }>;
+    };
+
+    expect(payload.authLastGoodProfileId).toBe("openai-codex:a@example.com");
+    expect(payload.nextCandidate).toBe("acct-b");
+    expect(payload.cooldowns).toEqual([
+      { alias: "acct-a", until: "2099-01-01T00:00:00.000Z" }
+    ]);
+    expect(payload.lastErrorCodes.find((item) => item.alias === "acct-a")?.code).toBe("rate_limit");
+    expect(payload.accounts.find((account) => account.alias === "acct-a")?.effectiveStatus).toBe(
+      "cooldown"
+    );
+    expect(payload.accounts.find((account) => account.alias === "acct-b")?.selected).toBe(true);
   });
 
   it("auto-loads default integration state from HOME when option is omitted", async () => {

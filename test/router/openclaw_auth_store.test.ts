@@ -7,6 +7,7 @@ import {
   clearProfileFailureState,
   mirrorFailureToOpenClaw,
   mirrorSuccessToOpenClaw,
+  syncAutoSessionAuthOverrides,
   syncCodexOrder
 } from "../../src/router/openclaw_auth_store.js";
 
@@ -242,5 +243,62 @@ describe("openclaw auth bridge", () => {
     expect(next.usageStats["openai-codex:a@example.com"]?.cooldownUntil).toBeUndefined();
     expect(next.usageStats["openai-codex:a@example.com"]?.disabledUntil).toBe(8_888_888_888_888);
     expect(next.usageStats["openai-codex:a@example.com"]?.disabledReason).toBe("auth_permanent");
+  });
+
+  it("syncs auto codex session overrides to the first ordered profile", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "openclaw-sessions-"));
+    cleanupPaths.push(dir);
+    const sessionStorePath = path.join(dir, "sessions.json");
+
+    await writeFile(
+      sessionStorePath,
+      JSON.stringify(
+        {
+          "agent:main:telegram:direct:1": {
+            modelProvider: "openai-codex",
+            compactionCount: 2,
+            authProfileOverride: "openai-codex:default",
+            authProfileOverrideSource: "auto",
+            authProfileOverrideCompactionCount: 0
+          },
+          "agent:main:telegram:direct:2": {
+            modelProvider: "openai-codex",
+            compactionCount: 1,
+            authProfileOverride: "openai-codex:locked@example.com",
+            authProfileOverrideSource: "user",
+            authProfileOverrideCompactionCount: 1
+          },
+          "agent:main:discord:direct:3": {
+            modelProvider: "anthropic",
+            authProfileOverride: "anthropic:default",
+            authProfileOverrideSource: "auto"
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await syncAutoSessionAuthOverrides(sessionStorePath, ["openai-codex:raj@example.com"]);
+
+    const next = JSON.parse(await readFile(sessionStorePath, "utf8")) as Record<
+      string,
+      {
+        authProfileOverride?: string;
+        authProfileOverrideSource?: string;
+        authProfileOverrideCompactionCount?: number;
+      }
+    >;
+
+    expect(next["agent:main:telegram:direct:1"]?.authProfileOverride).toBe(
+      "openai-codex:raj@example.com"
+    );
+    expect(next["agent:main:telegram:direct:1"]?.authProfileOverrideSource).toBe("auto");
+    expect(next["agent:main:telegram:direct:1"]?.authProfileOverrideCompactionCount).toBe(2);
+    expect(next["agent:main:telegram:direct:2"]?.authProfileOverride).toBe(
+      "openai-codex:locked@example.com"
+    );
+    expect(next["agent:main:discord:direct:3"]?.authProfileOverride).toBe("anthropic:default");
   });
 });
